@@ -35,6 +35,36 @@ describe("paper backtesting", () => {
     expect(BigInt(first.maxDrawdownBps)).toBeGreaterThanOrEqual(0n);
   });
 
+  it("does not execute a crossover on the same closing bar", () => {
+    const prices = Array(20).fill(100);
+    prices.push(1_000);
+    const result = runPaperBacktest(series(prices));
+    expect(result.trades).toBe(0);
+    expect(result.endingEquityMicros).toBe("20000000");
+  });
+
+  it("rejects unsafe custom policy ranges", () => {
+    const prices = series(Array(21).fill(100));
+    expect(() =>
+      runPaperBacktest(prices, {
+        ...DEFAULT_BACKTEST_POLICY,
+        initialCashMicros: 0n,
+      }),
+    ).toThrow("BACKTEST_INVALID_POLICY");
+    expect(() =>
+      runPaperBacktest(prices, {
+        ...DEFAULT_BACKTEST_POLICY,
+        feeBps: -1n,
+      }),
+    ).toThrow("BACKTEST_INVALID_POLICY");
+    expect(() =>
+      runPaperBacktest(prices, {
+        ...DEFAULT_BACKTEST_POLICY,
+        slippageBps: 10_000n,
+      }),
+    ).toThrow("BACKTEST_INVALID_POLICY");
+  });
+
   it("does not invent trades on a flat market", () => {
     const result = runPaperBacktest(series(Array(30).fill(100)));
     expect(result).toMatchObject({
