@@ -236,7 +236,7 @@ export const paperTradingAction: Action = {
       name: "quoteObservedAt",
       description: "ISO-8601 observation time for freshness validation.",
       required: false,
-      schema: { type: "string", format: "date-time" },
+      schema: { type: "string", minLength: 1 },
     },
     {
       name: "idempotencyKey",
