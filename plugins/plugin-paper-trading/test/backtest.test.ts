@@ -91,12 +91,12 @@ describe("paper backtesting", () => {
     expect(() => runPaperBacktest(series(Array(19).fill(100)))).toThrow(
       "BACKTEST_INSUFFICIENT_OR_INVALID_INPUT",
     );
-    const malformed = series(Array(20).fill(100));
+    const malformed = series(Array(21).fill(100));
     malformed[5] = { ...malformed[5]!, priceMicros: 0n };
     expect(() => runPaperBacktest(malformed)).toThrow(
       "BACKTEST_INVALID_PRICE_SERIES",
     );
-    const unordered = series(Array(20).fill(100));
+    const unordered = series(Array(21).fill(100));
     unordered[10] = {
       ...unordered[10]!,
       observedAtMs: unordered[9]!.observedAtMs,
