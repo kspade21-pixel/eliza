@@ -197,6 +197,8 @@ export const paperTradingAction: Action = {
           `Modeled return: ${formatPercent(result.returnBps)}`,
           `Maximum drawdown: ${formatPercent(result.maxDrawdownBps)}`,
           `Final research signal: ${result.finalSignal}`,
+          `Dataset as of: ${new Date(result.asOfMs).toISOString()}`,
+          `Dataset SHA-256: ${result.dataHash}`,
           "This is a historical simulation, not a profit forecast or live-trade instruction.",
         ].join("\n");
         await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
