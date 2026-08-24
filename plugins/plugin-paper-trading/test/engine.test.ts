@@ -149,7 +149,7 @@ describe("PaperTradingEngine", () => {
       .map((name) => fs.readFileSync(path.join(root, "src", name), "utf8"))
       .join("\n");
 
-    expect(Object.keys(packageJson.dependencies ?? {})).toEqual([]);
+    expect(packageJson.dependencies).toEqual({ "@elizaos/core": "workspace:*" });
     expect(source).not.toMatch(
       /from\s+["'][^"']*(wallet|exchange|ethers|viem|solana|web3)/i,
     );
