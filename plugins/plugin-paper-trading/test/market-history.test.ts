@@ -13,13 +13,14 @@ describe("public historical market data", () => {
     );
     const source = new CoinGeckoKeylessQuoteSource(
       fetchMock as unknown as typeof fetch,
+      () => 1_800_000_000_000,
     );
 
     const result = await source.history("BTC", 30);
 
     expect(result).toHaveLength(30);
     expect(result[0]).toEqual({
-      observedAtMs: 1_780_000_000_000,
+      observedAtMs: Math.floor(1_780_000_000_000 / 86_400_000) * 86_400_000,
       priceMicros: 50_000_000_000n,
     });
     const requested = String(fetchMock.mock.calls[0]?.[0]);
