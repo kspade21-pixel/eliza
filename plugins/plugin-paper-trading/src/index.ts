@@ -1,6 +1,7 @@
 export {
   DEFAULT_BACKTEST_POLICY,
   runPaperBacktest,
+  type BacktestContext,
   type BacktestPolicy,
   type BacktestResult,
   type HistoricalPrice,
