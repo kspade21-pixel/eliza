@@ -143,7 +143,17 @@ export function getBootHookContributors(): BootHookContributor[] {
       exportName: bootHook.exportName,
     });
   }
-  return resolveBootHookContributors(declarations);
+  const contributors = resolveBootHookContributors(declarations);
+
+  // lean-chat intentionally excludes local inference. Honor that policy here
+  // too, before the fallback boot hook can register local model handlers.
+  if (process.env.ELIZA_PLUGIN_SET?.trim().toLowerCase() === "lean-chat") {
+    return contributors.filter(
+      (contributor) => contributor.id !== "@elizaos/plugin-local-inference",
+    );
+  }
+
+  return contributors;
 }
 
 /** Invoke contributors in registry order and fail startup on a broken declaration. */

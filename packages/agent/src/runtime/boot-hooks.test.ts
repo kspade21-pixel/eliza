@@ -7,15 +7,32 @@
  * hook, and a host that ships without that plugin must skip it rather than
  * abort startup — while a genuinely broken hook module still fails the boot.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type BootHookDeclaration,
+  getBootHookContributors,
   resolveBootHookContributors,
 } from "./boot-hooks";
 
 const LOCAL_INFERENCE_ID = "@elizaos/plugin-local-inference";
 
 describe("boot-hook contributors", () => {
+  const originalPluginSet = process.env.ELIZA_PLUGIN_SET;
+
+  afterEach(() => {
+    if (originalPluginSet === undefined) {
+      delete process.env.ELIZA_PLUGIN_SET;
+    } else {
+      process.env.ELIZA_PLUGIN_SET = originalPluginSet;
+    }
+  });
+
+  it("does not install local inference for the lean-chat plugin set", () => {
+    process.env.ELIZA_PLUGIN_SET = "lean-chat";
+    const contributors = getBootHookContributors();
+    expect(contributors.map((c) => c.id)).not.toContain(LOCAL_INFERENCE_ID);
+  });
+
   it("installs the local-inference hook when the registry is empty", () => {
     // The packaged-build case: loadRegistry() degrades to [] by design, so an
     // empty declaration list must not mean "no local model handlers".
