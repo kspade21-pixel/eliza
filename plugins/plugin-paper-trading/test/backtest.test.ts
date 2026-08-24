@@ -65,6 +65,20 @@ describe("paper backtesting", () => {
     ).toThrow("BACKTEST_INVALID_POLICY");
   });
 
+  it("produces a stable evidence vector and changes it with policy", () => {
+    const prices = series(Array(21).fill(100));
+    const baseline = runPaperBacktest(prices);
+    const changed = runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY,
+      feeBps: 11n,
+    });
+    expect(baseline.evidenceHash).toBe(
+      "35517acd9df78cbe3dce82d69530cfe737d38ffdb70053052762f968ca73ab2c",
+    );
+    expect(changed.evidenceHash).not.toBe(baseline.evidenceHash);
+    expect(baseline.algorithmVersion).toBe("sma-5-20-next-bar-v1");
+  });
+
   it("does not invent trades on a flat market", () => {
     const result = runPaperBacktest(series(Array(30).fill(100)));
     expect(result).toMatchObject({
