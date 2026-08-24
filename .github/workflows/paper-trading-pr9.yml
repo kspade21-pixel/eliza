@@ -1,4 +1,4 @@
-name: Paper Trading PR 9
+name: Paper Trading PR
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ on:
       - ".github/workflows/paper-trading-pr9.yml"
 
 concurrency:
-  group: paper-trading-pr9-${{ github.event.pull_request.number }}
+  group: paper-trading-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -17,7 +17,6 @@ permissions:
 
 jobs:
   focused:
-    if: github.event.pull_request.number == 9
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
