@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ASSET_SCALE, BPS_SCALE } from "./types.js";
 
 export interface HistoricalPrice {
@@ -13,7 +14,9 @@ export interface BacktestResult {
   endingEquityMicros: string;
   returnBps: string;
   maxDrawdownBps: string;
-  finalSignal: "BUY" | "HOLD" | "EXIT" | "WAIT";
+  finalSignal: "BUY" | "HOLD" | "WAIT";
+  asOfMs: number;
+  dataHash: string;
 }
 
 export interface BacktestPolicy {
@@ -57,9 +60,21 @@ export function runPaperBacktest(
     !Number.isInteger(policy.slowWindow) ||
     policy.fastWindow <= 0 ||
     policy.slowWindow <= policy.fastWindow ||
-    input.length < policy.slowWindow
+    input.length <= policy.slowWindow
   ) {
     throw new Error("BACKTEST_INSUFFICIENT_OR_INVALID_INPUT");
+  }
+  if (
+    policy.initialCashMicros <= 0n ||
+    policy.allocationMicros < 0n ||
+    policy.minimumReserveMicros < 0n ||
+    policy.minimumReserveMicros > policy.initialCashMicros ||
+    policy.feeBps < 0n ||
+    policy.feeBps >= BPS_SCALE ||
+    policy.slippageBps < 0n ||
+    policy.slippageBps >= BPS_SCALE
+  ) {
+    throw new Error("BACKTEST_INVALID_POLICY");
   }
   for (const [index, bar] of input.entries()) {
     if (
@@ -79,10 +94,13 @@ export function runPaperBacktest(
   let maxDrawdownBps = 0n;
   let finalSignal: BacktestResult["finalSignal"] = "WAIT";
 
-  for (let index = policy.slowWindow - 1; index < input.length; index += 1) {
+  // Signal only from completed bars through index - 1, then execute on index.
+  // This prevents same-close look-ahead bias.
+  for (let index = policy.slowWindow; index < input.length; index += 1) {
     const bar = input[index]!;
-    const fast = average(input, index, policy.fastWindow);
-    const slow = average(input, index, policy.slowWindow);
+    const signalEnd = index - 1;
+    const fast = average(input, signalEnd, policy.fastWindow);
+    const slow = average(input, signalEnd, policy.slowWindow);
     const bullish = fast > slow;
 
     if (bullish && quantity === 0n) {
@@ -115,7 +133,7 @@ export function runPaperBacktest(
       trades += 1;
       finalSignal = "WAIT";
     } else {
-      finalSignal = quantity > 0n ? (bullish ? "HOLD" : "EXIT") : bullish ? "BUY" : "WAIT";
+      finalSignal = quantity > 0n ? "HOLD" : bullish ? "BUY" : "WAIT";
     }
 
     const equity = cash + (bar.priceMicros * quantity) / ASSET_SCALE;
@@ -132,6 +150,14 @@ export function runPaperBacktest(
     ((endingEquity - policy.initialCashMicros) * BPS_SCALE) /
     policy.initialCashMicros;
 
+  const dataHash = createHash("sha256")
+    .update(
+      JSON.stringify(
+        input.map((bar) => [bar.observedAtMs, bar.priceMicros.toString()]),
+      ),
+    )
+    .digest("hex");
+
   return {
     mode: "PAPER_BACKTEST",
     bars: input.length,
@@ -141,5 +167,7 @@ export function runPaperBacktest(
     returnBps: returnBps.toString(),
     maxDrawdownBps: maxDrawdownBps.toString(),
     finalSignal,
+    asOfMs: last.observedAtMs,
+    dataHash,
   };
 }
