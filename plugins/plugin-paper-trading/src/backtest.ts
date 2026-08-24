@@ -16,7 +16,14 @@ export interface BacktestResult {
   maxDrawdownBps: string;
   finalSignal: "BUY" | "HOLD" | "WAIT";
   asOfMs: number;
-  dataHash: string;
+  evidenceHash: string;
+  algorithmVersion: "sma-5-20-next-bar-v1";
+}
+
+export interface BacktestContext {
+  symbol: string;
+  source: string;
+  windowDays: number;
 }
 
 export interface BacktestPolicy {
@@ -54,6 +61,11 @@ function ceilDiv(value: bigint, divisor: bigint): bigint {
 export function runPaperBacktest(
   input: readonly HistoricalPrice[],
   policy: BacktestPolicy = DEFAULT_BACKTEST_POLICY,
+  context: BacktestContext = {
+    symbol: "TEST",
+    source: "verified-fixture",
+    windowDays: input.length,
+  },
 ): BacktestResult {
   if (
     !Number.isInteger(policy.fastWindow) ||
@@ -75,6 +87,14 @@ export function runPaperBacktest(
     policy.slippageBps >= BPS_SCALE
   ) {
     throw new Error("BACKTEST_INVALID_POLICY");
+  }
+  if (
+    !context.symbol.trim() ||
+    !context.source.trim() ||
+    !Number.isSafeInteger(context.windowDays) ||
+    context.windowDays <= 0
+  ) {
+    throw new Error("BACKTEST_INVALID_CONTEXT");
   }
   for (const [index, bar] of input.entries()) {
     if (
@@ -150,11 +170,30 @@ export function runPaperBacktest(
     ((endingEquity - policy.initialCashMicros) * BPS_SCALE) /
     policy.initialCashMicros;
 
-  const dataHash = createHash("sha256")
+  const algorithmVersion = "sma-5-20-next-bar-v1" as const;
+  const evidenceHash = createHash("sha256")
     .update(
-      JSON.stringify(
-        input.map((bar) => [bar.observedAtMs, bar.priceMicros.toString()]),
-      ),
+      JSON.stringify({
+        algorithmVersion,
+        context: {
+          symbol: context.symbol.trim().toUpperCase(),
+          source: context.source.trim(),
+          windowDays: context.windowDays,
+        },
+        policy: {
+          initialCashMicros: policy.initialCashMicros.toString(),
+          allocationMicros: policy.allocationMicros.toString(),
+          minimumReserveMicros: policy.minimumReserveMicros.toString(),
+          feeBps: policy.feeBps.toString(),
+          slippageBps: policy.slippageBps.toString(),
+          fastWindow: policy.fastWindow,
+          slowWindow: policy.slowWindow,
+        },
+        bars: input.map((bar) => [
+          bar.observedAtMs,
+          bar.priceMicros.toString(),
+        ]),
+      }),
     )
     .digest("hex");
 
@@ -168,6 +207,7 @@ export function runPaperBacktest(
     maxDrawdownBps: maxDrawdownBps.toString(),
     finalSignal,
     asOfMs: last.observedAtMs,
-    dataHash,
+    evidenceHash,
+    algorithmVersion,
   };
 }
