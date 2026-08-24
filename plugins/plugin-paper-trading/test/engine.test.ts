@@ -69,6 +69,25 @@ describe("PaperTradingEngine", () => {
     expect(engine.verifyAuditChain()).toBe(true);
   });
 
+  it("accepts a public quote inside the five-minute freshness window", () => {
+    const engine = new PaperTradingEngine();
+    const receipt = engine.execute(
+      order({
+        idempotencyKey: "public-cadence",
+        quote: {
+          symbol: "BTC",
+          priceMicros: BTC_PRICE_MICROS,
+          observedAtMs: NOW - 240_000,
+          source: "coingecko-keyless",
+        },
+      }),
+    );
+    expect(receipt).toMatchObject({
+      accepted: true,
+      reason: "SIMULATED_FILL",
+    });
+  });
+
   it("rejects stale and over-limit orders without changing the simulated ledger", () => {
     const engine = new PaperTradingEngine();
     const stale = engine.execute(
