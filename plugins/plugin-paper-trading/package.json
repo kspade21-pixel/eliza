@@ -1,0 +1,32 @@
+{
+  "name": "@elizaos/plugin-paper-trading",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wallet-free deterministic paper-trading simulator for elizaOS.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "eliza-source": {
+        "types": "./src/index.ts",
+        "import": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc6 --noCheck -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "files": ["dist"]
+}
