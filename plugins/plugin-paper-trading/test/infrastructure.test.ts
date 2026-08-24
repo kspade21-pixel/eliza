@@ -56,7 +56,7 @@ describe("restart-safe paper infrastructure", () => {
 
   it("fails closed on malformed or oversized public quote responses", async () => {
     const malformed = new CoinGeckoKeylessQuoteSource(
-      (async () => new Response('{"bitcoin":{"usd":"50000"}}')) as typeof fetch,
+      (async () => new Response('{"bitcoin":{"usd":"50000"}}')) as unknown as typeof fetch,
     );
     await expect(malformed.quote("BTC")).rejects.toThrow(
       "PUBLIC_QUOTE_MALFORMED",
@@ -66,7 +66,7 @@ describe("restart-safe paper infrastructure", () => {
       (async () =>
         new Response("x", {
           headers: { "content-length": "40000" },
-        })) as typeof fetch,
+        })) as unknown as typeof fetch,
     );
     await expect(oversized.quote("BTC")).rejects.toThrow(
       "PUBLIC_QUOTE_RESPONSE_TOO_LARGE",
