@@ -1,3 +1,10 @@
+export {
+  DEFAULT_BACKTEST_POLICY,
+  runPaperBacktest,
+  type BacktestPolicy,
+  type BacktestResult,
+  type HistoricalPrice,
+} from "./backtest.js";
 export { formatUsdMicros, paperTradingAction } from "./action.js";
 export { DEFAULT_PAPER_POLICY, PaperTradingEngine } from "./engine.js";
 export { CoinGeckoKeylessQuoteSource } from "./market-data.js";
