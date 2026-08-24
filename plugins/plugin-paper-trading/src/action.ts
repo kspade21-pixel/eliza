@@ -189,6 +189,7 @@ export const paperTradingAction: Action = {
       }
       const priceMicros = publicQuote?.priceMicros ??
         decimalToFixed(suppliedPrice, USD_SCALE, 6);
+      const auditLengthBefore = service.snapshot().auditLength;
       const receipt = service.execute({
         idempotencyKey,
         side: operation,
@@ -202,9 +203,15 @@ export const paperTradingAction: Action = {
         },
         requestedAtMs: Date.now(),
       });
+      const replayed = service.snapshot().auditLength === auditLengthBefore;
+      const outcome = replayed
+        ? "Existing simulated receipt returned; no new fill occurred."
+        : receipt.accepted
+          ? "Simulated fill accepted."
+          : "Simulated order rejected.";
       const output = [
         "PAPER / SIMULATION ONLY",
-        receipt.accepted ? "Simulated fill accepted." : "Simulated order rejected.",
+        outcome,
         `Reason: ${receipt.reason}`,
         `Symbol: ${receipt.symbol}`,
         `Quantity atomic: ${receipt.quantityAtomic}`,
@@ -230,6 +237,7 @@ export const paperTradingAction: Action = {
           actionName: "PAPER_TRADING",
           mode: "PAPER",
           operation,
+          replayed,
           receipt,
         },
       };
