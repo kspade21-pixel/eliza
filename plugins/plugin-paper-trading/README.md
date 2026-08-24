@@ -69,9 +69,11 @@ that an observation is a market-open price.
 
 Supported windows are 30, 90, 180, and 365 days. The simulation starts with
 $20, limits each modeled allocation to $2, preserves a $10 reserve, remains
-long-only, and reports optimistic (5/10 bps), base (10/20 bps), and stress
-(25/50 bps) fee/slippage scenarios. These are illustrative sensitivity
-assumptions, not observed fills or worst-case bounds.
+long-only, and separates fee, full spread, and market-impact assumptions. The
+base scenario uses the requested policy inputs (defaults: 10/10/10 bps);
+optimistic uses 0.5x and stress uses 2.5x those inputs. All are explicitly
+illustrative sensitivity assumptions, not observed fills or worst-case bounds.
+No venue execution basis is observed, so output prohibits profitability ranking.
 
 Example chat request:
 
@@ -85,7 +87,16 @@ comparisons use liquidation value. It also reports decision-bar and round-trip
 warnings, coverage/gap metrics, and a versioned run manifest with retrieval and
 dataset as-of provenance where available.
 
-The SHA-256 value is only a reproducible-input hash. It is not evidence that the
+Strategy and buy-and-hold maximum drawdown use the same liquidation-adjusted
+path convention: at each observation, an open position is hypothetically closed
+using that scenario's fee, half-spread, and market-impact assumptions. This
+keeps benchmark drawdown comparable with terminal liquidation value, but remains
+an illustrative model rather than venue evidence.
+
+The SHA-256 value is only a reproducible content/input hash. Retrieval time is
+recorded in the manifest but deliberately excluded from this hash, so identical
+normalized bars and assumptions hash identically across retrievals. The hash is
+not evidence that the
 data, model, assumptions, or result are correct. Output is labeled
 `UNVERIFIED RESEARCH` and is not a forecast, guarantee, validation, or
 instruction to trade. Backtests never write to the persistent portfolio and

@@ -60,7 +60,7 @@ describe("paper backtesting", () => {
     expect(() =>
       runPaperBacktest(prices, {
         ...DEFAULT_BACKTEST_POLICY,
-        slippageBps: 10_000n,
+        marketImpactBps: 10_000n,
       }),
     ).toThrow("BACKTEST_INVALID_POLICY");
   });
@@ -74,7 +74,7 @@ describe("paper backtesting", () => {
     });
     expect(baseline.runManifest.inputSha256).toHaveLength(64);
     expect(changed.runManifest.inputSha256).not.toBe(baseline.runManifest.inputSha256);
-    expect(baseline.algorithmVersion).toBe("sma-5-20-next-observation-v2");
+    expect(baseline.algorithmVersion).toBe("sma-5-20-next-observation-cost-model-v3");
   });
 
   it("does not invent trades on a flat market", () => {
@@ -128,10 +128,78 @@ describe("paper backtesting", () => {
     expect(BigInt(result.markToMarketEquityMicros)).toBeGreaterThanOrEqual(BigInt(result.liquidationValueEquityMicros));
     expect(result.coverage).toMatchObject({ gapCount: 1, missingDailyIntervals: 1 });
     expect(result.runManifest).toMatchObject({
-      schemaVersion: "paper-backtest-run-manifest/v1",
+      schemaVersion: "paper-backtest-run-manifest/v2",
       priceFieldSemantics: "observation-price; not asserted to be market open",
     });
     expect(result.researchStatus).toBe("UNVERIFIED_RESEARCH");
     expect(result.warnings.join(" ")).toContain("LOW_ROUND_TRIPS");
+  });
+
+  it("keeps content hash stable across retrieval times", () => {
+    const prices = series(Array(30).fill(100));
+    const first = runPaperBacktest(prices, undefined, {
+      symbol: "BTC", source: "fixture", windowDays: 30, retrievedAtMs: START + 31 * DAY,
+    });
+    const second = runPaperBacktest(prices, undefined, {
+      symbol: "BTC", source: "fixture", windowDays: 30, retrievedAtMs: START + 32 * DAY,
+    });
+    expect(first.runManifest.retrievedAtMs).not.toBe(second.runManifest.retrievedAtMs);
+    expect(first.runManifest.inputSha256).toBe(second.runManifest.inputSha256);
+  });
+
+  it("uses requested costs for base and keeps illustrative sensitivity ordered", () => {
+    const prices = series(Array.from({ length: 60 }, (_, index) => 100 + index));
+    const low = runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY, feeBps: 2n, spreadBps: 4n, marketImpactBps: 3n,
+    });
+    const high = runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY, feeBps: 20n, spreadBps: 30n, marketImpactBps: 40n,
+    });
+    expect(low.scenarios[1]).toMatchObject({
+      feeBps: "2", spreadBps: "4", marketImpactBps: "3",
+      costProvenance: "illustrative-policy-input",
+      liquidationValueEquityMicros: "20646290",
+      liquidationReturnBps: "323",
+    });
+    expect(low.runManifest.costModel[1]).toMatchObject({
+      feeBps: "2", spreadBps: "4", marketImpactBps: "3",
+      provenance: "illustrative-policy-input",
+    });
+    expect(low.scenarios[1]!.liquidationValueEquityMicros).not.toBe(
+      high.scenarios[1]!.liquidationValueEquityMicros,
+    );
+    const returns = low.scenarios.map((item) => BigInt(item.liquidationReturnBps));
+    expect(returns[0]).toBeGreaterThanOrEqual(returns[1]!);
+    expect(returns[1]).toBeGreaterThanOrEqual(returns[2]!);
+  });
+
+  it("uses the next observation for a positive fill and has fixed-point golden math", () => {
+    const prices = series([...Array(20).fill(100), 200, 300]);
+    const result = runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY, feeBps: 0n, spreadBps: 0n, marketImpactBps: 0n,
+    });
+    const base = result.scenarios[1]!;
+    // The signal from observation 20 executes at observation 21 (300), not 200.
+    expect(base.trades).toBe(1);
+    expect(base.markToMarketEquityMicros).toBe("20000000");
+    expect(base.liquidationValueEquityMicros).toBe("20000000");
+    expect(base.buyHoldLiquidationValueEquityMicros).toBe("21000000");
+    expect(base.netVsCashBps).toBe("0");
+    expect(base.netVsBuyHoldBps).toBe("-500");
+  });
+
+  it("reports same-convention benchmark drawdown and blocks ranking", () => {
+    const result = runPaperBacktest(series([
+      ...Array(20).fill(100), 120, 80, 60, 100, 110,
+    ]));
+    const base = result.scenarios[1]!;
+    expect(BigInt(base.buyHoldLiquidationAdjustedMaxDrawdownBps)).toBeGreaterThanOrEqual(0n);
+    expect(base.profitabilityRanking).toBeNull();
+    expect(base.comparisonStatus).toBe("NOT_RANKED_NO_OBSERVED_VENUE_BASIS");
+    expect(result.runManifest).toMatchObject({
+      venueBasis: "none-observed",
+      profitabilityRankingPermitted: false,
+      drawdownConvention: "liquidation-value-at-each-observation",
+    });
   });
 });
