@@ -24,18 +24,30 @@ export class PaperTradingService extends Service {
   readonly stateStore: PaperStateStore;
 
   constructor(
-    runtime: IAgentRuntime,
-    stateStore: PaperStateStore,
+    runtime?: IAgentRuntime,
+    stateStore?: PaperStateStore,
     quoteSource = new CoinGeckoKeylessQuoteSource(),
   ) {
     super(runtime);
-    this.stateStore = stateStore;
+    const agentId = runtime ? String(runtime.agentId) : "default";
+    this.stateStore =
+      stateStore ??
+      new PaperStateStore(
+        path.join(
+          homedir(),
+          ".local",
+          "state",
+          "eliza",
+          "paper-trading",
+          `${agentId}.json`,
+        ),
+      );
     this.quoteSource = quoteSource;
-    const stored = stateStore.load();
+    const stored = this.stateStore.load();
     this.engine = stored
       ? PaperTradingEngine.fromState(stored)
       : new PaperTradingEngine();
-    if (!stored) stateStore.save(this.engine.exportState());
+    if (!stored) this.stateStore.save(this.engine.exportState());
   }
 
   static override async start(
@@ -54,7 +66,7 @@ export class PaperTradingService extends Service {
     );
     const service = new PaperTradingService(runtime, stateStore);
     logger.info(
-      { src: "plugin-paper-trading", mode: "PAPER", ...service.snapshot() },
+      { src: "plugin-paper-trading", ...service.snapshot() },
       "[PaperTradingService] Ready",
     );
     return service;
