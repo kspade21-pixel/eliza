@@ -40,7 +40,7 @@ describe("paper backtesting", () => {
     prices.push(1_000);
     const result = runPaperBacktest(series(prices));
     expect(result.trades).toBe(0);
-    expect(result.endingEquityMicros).toBe("20000000");
+    expect(result.liquidationValueEquityMicros).toBe("20000000");
   });
 
   it("rejects unsafe custom policy ranges", () => {
@@ -65,26 +65,24 @@ describe("paper backtesting", () => {
     ).toThrow("BACKTEST_INVALID_POLICY");
   });
 
-  it("produces a stable evidence vector and changes it with policy", () => {
+  it("produces a reproducible input hash and changes it with policy", () => {
     const prices = series(Array(21).fill(100));
     const baseline = runPaperBacktest(prices);
     const changed = runPaperBacktest(prices, {
       ...DEFAULT_BACKTEST_POLICY,
       feeBps: 11n,
     });
-    expect(baseline.evidenceHash).toBe(
-      "35517acd9df78cbe3dce82d69530cfe737d38ffdb70053052762f968ca73ab2c",
-    );
-    expect(changed.evidenceHash).not.toBe(baseline.evidenceHash);
-    expect(baseline.algorithmVersion).toBe("sma-5-20-next-bar-v1");
+    expect(baseline.runManifest.inputSha256).toHaveLength(64);
+    expect(changed.runManifest.inputSha256).not.toBe(baseline.runManifest.inputSha256);
+    expect(baseline.algorithmVersion).toBe("sma-5-20-next-observation-v2");
   });
 
   it("does not invent trades on a flat market", () => {
     const result = runPaperBacktest(series(Array(30).fill(100)));
     expect(result).toMatchObject({
       trades: 0,
-      endingEquityMicros: DEFAULT_BACKTEST_POLICY.initialCashMicros.toString(),
-      returnBps: "0",
+      liquidationValueEquityMicros: DEFAULT_BACKTEST_POLICY.initialCashMicros.toString(),
+      liquidationReturnBps: "0",
       finalSignal: "WAIT",
     });
   });
@@ -113,6 +111,27 @@ describe("paper backtesting", () => {
       series(Array.from({ length: 30 }, (_, index) => 100 + index)),
     );
     expect(result.trades).toBe(1);
-    expect(BigInt(result.endingEquityMicros)).toBeGreaterThan(10_000_000n);
+    expect(BigInt(result.liquidationValueEquityMicros)).toBeGreaterThan(10_000_000n);
+  });
+
+  it("reports benchmarks, friction scenarios, terminal values, warnings, and gaps", () => {
+    const values = series(Array.from({ length: 60 }, (_, index) => 100 + index));
+    values[40] = { ...values[40]!, observedAtMs: values[40]!.observedAtMs + DAY };
+    for (let index = 41; index < values.length; index++) {
+      values[index] = { ...values[index]!, observedAtMs: values[index]!.observedAtMs + DAY };
+    }
+    const result = runPaperBacktest(values, undefined, {
+      symbol: "BTC", source: "fixture", windowDays: 60, retrievedAtMs: START + 70 * DAY,
+    });
+    expect(result.scenarios.map((item) => item.name)).toEqual(["optimistic", "base", "stress"]);
+    expect(result.scenarios.every((item) => item.cashBenchmarkReturnBps === "0")).toBe(true);
+    expect(BigInt(result.markToMarketEquityMicros)).toBeGreaterThanOrEqual(BigInt(result.liquidationValueEquityMicros));
+    expect(result.coverage).toMatchObject({ gapCount: 1, missingDailyIntervals: 1 });
+    expect(result.runManifest).toMatchObject({
+      schemaVersion: "paper-backtest-run-manifest/v1",
+      priceFieldSemantics: "observation-price; not asserted to be market open",
+    });
+    expect(result.researchStatus).toBe("UNVERIFIED_RESEARCH");
+    expect(result.warnings.join(" ")).toContain("LOW_ROUND_TRIPS");
   });
 });

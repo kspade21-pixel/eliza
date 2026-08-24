@@ -21,7 +21,7 @@ function history(): HistoricalPrice[] {
 }
 
 describe("paper backtest action", () => {
-  it("returns evidence and leaves the persistent paper ledger unchanged", async () => {
+  it("returns unverified reproducibility metadata and leaves the ledger unchanged", async () => {
     const engine = new PaperTradingEngine();
     const before = engine.snapshot();
     const service = {
@@ -42,8 +42,11 @@ describe("paper backtest action", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.text).toContain("PAPER BACKTEST / RESEARCH ONLY");
-    expect(result.text).toContain("Evidence SHA-256:");
+    expect(result.text).toContain("UNVERIFIED RESEARCH");
+    expect(result.text).toContain("Reproducible input SHA-256:");
+    expect(result.text).toContain("Liquidation-value equity / return:");
+    expect(result.text).toContain("Friction stress:");
+    expect(result.verifiedUserFacing).toBe(false);
     expect(result.text).not.toContain("undefined");
     expect(result.data).toMatchObject({
       actionName: "PAPER_TRADING",

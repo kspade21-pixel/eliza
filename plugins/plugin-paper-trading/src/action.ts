@@ -185,6 +185,7 @@ export const paperTradingAction: Action = {
           symbol,
           source: "coingecko-keyless",
           windowDays: days,
+          retrievedAtMs: Date.now(),
         });
         const formatPercent = (bps: string): string => {
           const value = BigInt(bps);
@@ -195,26 +196,34 @@ export const paperTradingAction: Action = {
             .padStart(2, "0")}%`;
         };
         const output = [
-          "PAPER BACKTEST / RESEARCH ONLY",
+          "UNVERIFIED RESEARCH / PAPER BACKTEST ONLY",
           `Symbol: ${symbol}`,
           `Historical bars: ${result.bars}`,
-          `Simulated trades: ${result.trades}`,
+          `Decision bars: ${result.decisionBars}`,
+          `Simulated trades / round trips: ${result.trades} / ${result.roundTrips}`,
           `Starting equity: ${formatUsdMicros(result.initialEquityMicros)}`,
-          `Ending equity: ${formatUsdMicros(result.endingEquityMicros)}`,
-          `Modeled return: ${formatPercent(result.returnBps)}`,
+          `Mark-to-market equity / return: ${formatUsdMicros(result.markToMarketEquityMicros)} / ${formatPercent(result.markToMarketReturnBps)}`,
+          `Liquidation-value equity / return: ${formatUsdMicros(result.liquidationValueEquityMicros)} / ${formatPercent(result.liquidationReturnBps)}`,
+          `Base net vs cash / buy-and-hold: ${formatPercent(result.scenarios[1]!.netVsCashBps)} / ${formatPercent(result.scenarios[1]!.netVsBuyHoldBps)}`,
           `Maximum drawdown: ${formatPercent(result.maxDrawdownBps)}`,
+          `Coverage: ${formatPercent(result.coverage.coverageBps)}; gaps: ${result.coverage.gapCount}; missing intervals: ${result.coverage.missingDailyIntervals}`,
+          ...result.scenarios.map((scenario) => `Friction ${scenario.name}: fee ${scenario.feeBps} bps, slippage ${scenario.slippageBps} bps; liquidation return ${formatPercent(scenario.liquidationReturnBps)}; ${scenario.assumptions}`),
+          ...result.warnings.map((warning) => `Warning: ${warning}`),
           `Final research signal: ${result.finalSignal}`,
           `Dataset as of: ${new Date(result.asOfMs).toISOString()}`,
-          `Evidence SHA-256: ${result.evidenceHash}`,
+          `Retrieved at: ${new Date(result.runManifest.retrievedAtMs!).toISOString()}`,
+          `Reproducible input SHA-256: ${result.runManifest.inputSha256}`,
+          `Manifest schema: ${result.runManifest.schemaVersion}`,
+          `Execution: ${result.runManifest.executionSemantics}`,
           `Algorithm: ${result.algorithmVersion}`,
-          "This is a historical simulation, not a profit forecast or live-trade instruction.",
+          "UNVERIFIED RESEARCH: observations are not asserted to be market opens. This is not a forecast, validation, or live-trade instruction.",
         ].join("\n");
         await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
         return {
           success: true,
           text: output,
           userFacingText: output,
-          verifiedUserFacing: true,
+          verifiedUserFacing: false,
           turnComplete: true,
           data: {
             actionName: "PAPER_TRADING",
