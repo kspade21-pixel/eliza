@@ -7,7 +7,7 @@
  * hook, and a host that ships without that plugin must skip it rather than
  * abort startup — while a genuinely broken hook module still fails the boot.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type BootHookDeclaration,
   getBootHookContributors,
@@ -17,12 +17,18 @@ import {
 const LOCAL_INFERENCE_ID = "@elizaos/plugin-local-inference";
 
 describe("boot-hook contributors", () => {
+  const originalPluginSet = process.env.ELIZA_PLUGIN_SET;
+
   afterEach(() => {
-    vi.unstubAllEnvs();
+    if (originalPluginSet === undefined) {
+      delete process.env.ELIZA_PLUGIN_SET;
+    } else {
+      process.env.ELIZA_PLUGIN_SET = originalPluginSet;
+    }
   });
 
   it("does not install local inference for the lean-chat plugin set", () => {
-    vi.stubEnv("ELIZA_PLUGIN_SET", "lean-chat");
+    process.env.ELIZA_PLUGIN_SET = "lean-chat";
     const contributors = getBootHookContributors();
     expect(contributors.map((c) => c.id)).not.toContain(LOCAL_INFERENCE_ID);
   });
