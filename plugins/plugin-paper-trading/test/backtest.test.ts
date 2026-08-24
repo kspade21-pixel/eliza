@@ -202,4 +202,34 @@ describe("paper backtesting", () => {
       drawdownConvention: "liquidation-value-at-each-observation",
     });
   });
+
+  it("rejects base costs whose derived stress case reaches invalid bounds", () => {
+    const prices = series(Array.from({ length: 30 }, (_, index) => 100 + index));
+    expect(() => runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY,
+      feeBps: 4_000n,
+    })).toThrow("BACKTEST_INVALID_POLICY");
+    expect(() => runPaperBacktest(prices, {
+      ...DEFAULT_BACKTEST_POLICY,
+      marketImpactBps: 4_000n,
+    })).toThrow("BACKTEST_INVALID_POLICY");
+  });
+
+  it("keeps stress liquidation proceeds and equity non-negative at the boundary", () => {
+    const result = runPaperBacktest(
+      series(Array.from({ length: 60 }, (_, index) => 1 + index)),
+      {
+        ...DEFAULT_BACKTEST_POLICY,
+        feeBps: 3_999n,
+        spreadBps: 3_998n,
+        marketImpactBps: 2_000n,
+      },
+    );
+    const stress = result.scenarios[2]!;
+    expect(BigInt(stress.feeBps)).toBeLessThan(10_000n);
+    expect((BigInt(stress.spreadBps) + 1n) / 2n + BigInt(stress.marketImpactBps))
+      .toBeLessThan(10_000n);
+    expect(BigInt(stress.liquidationValueEquityMicros)).toBeGreaterThanOrEqual(0n);
+    expect(BigInt(stress.buyHoldLiquidationValueEquityMicros)).toBeGreaterThanOrEqual(0n);
+  });
 });

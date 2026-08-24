@@ -99,7 +99,8 @@ function liquidate(quantity: bigint, price: bigint, p: BacktestPolicy) {
   const executionCostBps = ceilDiv(p.spreadBps, 2n) + p.marketImpactBps;
   const execution = (price * (BPS_SCALE - executionCostBps)) / BPS_SCALE;
   const notional = (execution * quantity) / ASSET_SCALE;
-  return notional - ceilDiv(notional * p.feeBps, BPS_SCALE);
+  const fee = ceilDiv(notional * p.feeBps, BPS_SCALE);
+  return fee >= notional ? 0n : notional - fee;
 }
 function coverage(input: readonly HistoricalPrice[]) {
   let gapCount = 0, missing = 0, maximumGapDays = 1;
@@ -170,11 +171,16 @@ export function runPaperBacktest(
   if (!Number.isInteger(policy.fastWindow) || !Number.isInteger(policy.slowWindow) ||
       policy.fastWindow <= 0 || policy.slowWindow <= policy.fastWindow || input.length <= policy.slowWindow)
     throw new Error("BACKTEST_INSUFFICIENT_OR_INVALID_INPUT");
+  const stressFeeBps = ceilDiv(policy.feeBps * 5n, 2n);
+  const stressSpreadBps = ceilDiv(policy.spreadBps * 5n, 2n);
+  const stressMarketImpactBps = ceilDiv(policy.marketImpactBps * 5n, 2n);
   if (policy.initialCashMicros <= 0n || policy.allocationMicros < 0n || policy.minimumReserveMicros < 0n ||
       policy.minimumReserveMicros > policy.initialCashMicros || policy.feeBps < 0n ||
       policy.feeBps >= BPS_SCALE || policy.spreadBps < 0n || policy.spreadBps >= BPS_SCALE ||
       policy.marketImpactBps < 0n || policy.marketImpactBps >= BPS_SCALE ||
-      ceilDiv(policy.spreadBps, 2n) + policy.marketImpactBps >= BPS_SCALE)
+      ceilDiv(policy.spreadBps, 2n) + policy.marketImpactBps >= BPS_SCALE ||
+      stressFeeBps >= BPS_SCALE ||
+      ceilDiv(stressSpreadBps, 2n) + stressMarketImpactBps >= BPS_SCALE)
     throw new Error("BACKTEST_INVALID_POLICY");
   if (!context.symbol.trim() || !context.source.trim() || !Number.isSafeInteger(context.windowDays) ||
       context.windowDays <= 0 || (context.retrievedAtMs !== undefined &&
