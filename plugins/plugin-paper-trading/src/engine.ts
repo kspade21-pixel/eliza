@@ -3,6 +3,7 @@ import {
   ASSET_SCALE,
   BPS_SCALE,
   type AuditReceipt,
+  type PaperEngineState,
   type PaperLedger,
   type PaperOrder,
   type PaperPosition,
@@ -235,6 +236,97 @@ export class PaperTradingEngine {
       previousHash = hash;
     }
     return true;
+  }
+
+  exportState(): PaperEngineState {
+    return {
+      version: 1,
+      cashMicros: this.ledger.cashMicros.toString(),
+      realizedPnlMicros: this.ledger.realizedPnlMicros.toString(),
+      halted: this.ledger.halted,
+      positions: [...this.ledger.positions.values()].map((position) => ({
+        symbol: position.symbol,
+        quantityAtomic: position.quantityAtomic.toString(),
+        costBasisMicros: position.costBasisMicros.toString(),
+        lastMarkPriceMicros: position.lastMarkPriceMicros.toString(),
+      })),
+      audit: this.audit.map((receipt) => ({ ...receipt })),
+    };
+  }
+
+  static fromState(
+    state: PaperEngineState,
+    policy: RiskPolicy = DEFAULT_PAPER_POLICY,
+  ): PaperTradingEngine {
+    if (!state || state.version !== 1 || !Array.isArray(state.positions) || !Array.isArray(state.audit)) {
+      throw new Error("INVALID_PAPER_STATE_VERSION");
+    }
+    const parseUnsigned = (value: string, field: string): bigint => {
+      if (typeof value !== "string" || !/^(?:0|[1-9]\\d*)$/.test(value)) {
+        throw new Error(`INVALID_PAPER_STATE_${field}`);
+      }
+      return BigInt(value);
+    };
+    const parseSigned = (value: string, field: string): bigint => {
+      if (typeof value !== "string" || !/^-?(?:0|[1-9]\\d*)$/.test(value)) {
+        throw new Error(`INVALID_PAPER_STATE_${field}`);
+      }
+      return BigInt(value);
+    };
+
+    const engine = new PaperTradingEngine(policy);
+    engine.ledger.cashMicros = parseUnsigned(state.cashMicros, "CASH");
+    engine.ledger.realizedPnlMicros = parseSigned(
+      state.realizedPnlMicros,
+      "REALIZED_PNL",
+    );
+    engine.ledger.halted = state.halted === true;
+    engine.ledger.positions.clear();
+
+    for (const stored of state.positions) {
+      const symbol = stored.symbol?.trim().toUpperCase();
+      if (
+        !symbol ||
+        !engine.policy.symbolAllowlist.includes(symbol) ||
+        engine.ledger.positions.has(symbol)
+      ) {
+        throw new Error("INVALID_PAPER_STATE_POSITION");
+      }
+      const position: PaperPosition = {
+        symbol,
+        quantityAtomic: parseUnsigned(stored.quantityAtomic, "QUANTITY"),
+        costBasisMicros: parseUnsigned(stored.costBasisMicros, "COST_BASIS"),
+        lastMarkPriceMicros: parseUnsigned(stored.lastMarkPriceMicros, "MARK"),
+      };
+      if (
+        position.quantityAtomic <= 0n ||
+        position.costBasisMicros <= 0n ||
+        position.lastMarkPriceMicros <= 0n
+      ) {
+        throw new Error("INVALID_PAPER_STATE_POSITION");
+      }
+      engine.ledger.positions.set(symbol, position);
+    }
+
+    engine.audit.splice(0, engine.audit.length, ...state.audit.map((receipt) => ({ ...receipt })));
+    for (const [index, receipt] of engine.audit.entries()) {
+      if (
+        receipt.sequence !== index + 1 ||
+        !receipt.idempotencyKey?.trim() ||
+        engine.#receiptsByKey.has(receipt.idempotencyKey)
+      ) {
+        throw new Error("INVALID_PAPER_STATE_AUDIT");
+      }
+      engine.#receiptsByKey.set(receipt.idempotencyKey, receipt);
+    }
+    if (!engine.verifyAuditChain()) {
+      throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
+    }
+    const finalCash = engine.audit.at(-1)?.cashAfterMicros;
+    if (finalCash !== undefined && finalCash !== engine.ledger.cashMicros.toString()) {
+      throw new Error("INVALID_PAPER_STATE_CASH_MISMATCH");
+    }
+    return engine;
   }
 
   #validatePolicy(): void {
