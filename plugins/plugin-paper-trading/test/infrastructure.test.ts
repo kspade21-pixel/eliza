@@ -27,14 +27,15 @@ describe("restart-safe paper infrastructure", () => {
 
   it("accepts a verified provider timestamp and caches repeated reads", async () => {
     let now = 1_787_545_600_000;
-    const fetcher = vi.fn(async () =>
+    const fetchMock = vi.fn(async () =>
       new Response(
         JSON.stringify({
           bitcoin: { usd: 50_000.123456, last_updated_at: now / 1_000 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
-    ) as unknown as typeof fetch;
+    );
+    const fetcher = fetchMock as unknown as typeof fetch;
     const source = new CoinGeckoKeylessQuoteSource(fetcher, () => now);
 
     const first = await source.quote("BTC");
@@ -48,8 +49,8 @@ describe("restart-safe paper infrastructure", () => {
       source: "coingecko-keyless",
     });
     expect(second).toBe(first);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(String(fetcher.mock.calls[0]?.[0])).toContain(
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
       "include_last_updated_at=true",
     );
   });
