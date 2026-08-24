@@ -35,6 +35,9 @@ jobs:
       - name: Install locked dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Build core workspace dependency
+        run: bun run build:core
+
       - name: Typecheck paper trading
         run: bun run --cwd plugins/plugin-paper-trading typecheck
 

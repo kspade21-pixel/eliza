@@ -41,6 +41,8 @@ describe("paper backtest action", () => {
       } as HandlerOptions,
     );
 
+    expect(result).toBeDefined();
+    if (!result) throw new Error("backtest action returned no result");
     expect(result.success).toBe(true);
     expect(result.text).toContain("UNVERIFIED RESEARCH");
     expect(result.text).toContain("Reproducible input SHA-256:");
@@ -78,6 +80,8 @@ describe("paper backtest action", () => {
       } as HandlerOptions,
     );
 
+    expect(result).toBeDefined();
+    if (!result) throw new Error("backtest action returned no result");
     expect(result.success).toBe(false);
     expect(called).toBe(false);
   });

@@ -334,7 +334,7 @@ export const paperTradingAction: Action = {
       name: "days",
       description: "Historical backtest window: 30, 90, 180, or 365 days.",
       required: false,
-      schema: { type: "number", enum: [30, 90, 180, 365] },
+      schema: { type: "number" },
     },
     {
       name: "symbol",
