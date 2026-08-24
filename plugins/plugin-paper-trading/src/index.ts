@@ -1,4 +1,4 @@
-export { paperTradingAction } from "./action.js";
+export { formatUsdMicros, paperTradingAction } from "./action.js";
 export { DEFAULT_PAPER_POLICY, PaperTradingEngine } from "./engine.js";
 export { paperTradingPlugin, paperTradingPlugin as default } from "./plugin.js";
 export { paperTradingProvider } from "./provider.js";
