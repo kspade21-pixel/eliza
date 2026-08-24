@@ -61,3 +61,25 @@ The runtime service is intentionally in-memory in this release. Restarting Eliza
 resets the simulated ledger to $20 and clears its audit chain. Durable storage
 and read-only public market-data ingestion require separate reviewed changes.
 Live execution remains out of scope.
+
+
+## Public historical backtesting
+
+The `backtest` operation downloads bounded, read-only daily BTC or ETH history
+from the fixed CoinGecko public endpoint and runs a deterministic 5/20 moving
+average research simulation.
+
+Supported windows are 30, 90, 180, and 365 days. The simulation starts with
+$20, limits each modeled allocation to $2, preserves a $10 reserve, remains
+long-only, and models the same 10 bps fee and 20 bps slippage assumptions used
+by the paper ledger.
+
+Example chat request:
+
+```text
+Use PAPER_TRADING with operation backtest, symbol BTC, and days 90. Report the historical paper research only.
+```
+
+Backtest output is research evidence, not a forecast, guarantee, or instruction
+to trade. It never writes to the persistent portfolio and cannot route orders,
+wallet actions, transfers, or credentials.
