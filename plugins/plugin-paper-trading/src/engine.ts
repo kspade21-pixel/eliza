@@ -40,7 +40,7 @@ export const DEFAULT_PAPER_POLICY: RiskPolicy = Object.freeze({
   maxDailyLossMicros: 1_000_000n,
   feeBps: 10n,
   slippageBps: 20n,
-  maxQuoteAgeMs: 60_000,
+  maxQuoteAgeMs: 300_000,
   symbolAllowlist: ["BTC", "ETH"],
 });
 
