@@ -7,13 +7,13 @@ A wallet-free, deterministic spot paper-trading engine for AlphaApextrd.
 This package is simulation-only. It has:
 
 - no wallet dependency;
-- no exchange SDK or network adapter;
+- no exchange SDK or order-routing adapter;
+- fixed-host, read-only CoinGecko public market-data requests only;
 - no credential or environment-variable reads;
 - no transfers, swaps, live orders, margin, leverage, or shorting;
 - no claim or guarantee of profitability.
 
-Every result is labeled `PAPER`. Quotes must be supplied with a symbol, source,
-observation time, and positive fixed-point price. Stale, future, mismatched, or
+Every trading result is labeled `PAPER`. Quotes may be explicitly supplied with provenance or fetched from the fixed read-only public source. Stale, future, mismatched, or
 unapproved-symbol quotes fail closed.
 
 ## Default $20 policy
@@ -28,7 +28,7 @@ unapproved-symbol quotes fail closed.
 | Daily-loss halt | $1.00 |
 | Fee model | 10 bps |
 | Slippage model | 20 bps |
-| Maximum quote age | 60 seconds |
+| Maximum quote age | 5 minutes |
 | Symbol allowlist | BTC, ETH |
 
 Money uses integer USD micros and asset quantities use integer atomic units.
@@ -48,19 +48,15 @@ bun run --cwd plugins/plugin-paper-trading build
 The owner-only `PAPER_TRADING` action supports:
 
 - `operation=status` — read the simulated ledger and risk state;
+- `operation=quote` — read a bounded public BTC/ETH quote;
+- `operation=backtest` — run historical paper research without changing the ledger;
 - `operation=buy` — deterministic simulated spot buy;
 - `operation=sell` — deterministic simulated spot sell.
 
-Buy and sell require an explicit decimal quantity, decimal USD quote, quote
-source, ISO-8601 observation time, and idempotency key. Quotes older than 60
-seconds, future quotes, missing provenance, and symbols outside BTC/ETH are
-rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
+Buy and sell require a decimal quantity and idempotency key. They may use a fresh public quote or an explicitly supplied USD quote with source and ISO-8601 observation time. Quotes older than five minutes, future quotes, missing provenance, and symbols outside BTC/ETH are rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
 simulation-only.
 
-The runtime service is intentionally in-memory in this release. Restarting Eliza
-resets the simulated ledger to $20 and clears its audit chain. Durable storage
-and read-only public market-data ingestion require separate reviewed changes.
-Live execution remains out of scope.
+The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. Startup restores only versioned, hash-valid state and fails closed on corruption. Live execution remains out of scope.
 
 
 ## Public historical backtesting
@@ -80,6 +76,5 @@ Example chat request:
 Use PAPER_TRADING with operation backtest, symbol BTC, and days 90. Report the historical paper research only.
 ```
 
-Backtest output is research evidence, not a forecast, guarantee, or instruction
-to trade. It never writes to the persistent portfolio and cannot route orders,
+Backtest output includes the completed-bar as-of time, algorithm version, and a SHA-256 evidence hash covering symbol, source, window, policy, and normalized bars. It is research evidence, not a forecast, guarantee, or instruction to trade. It never writes to the persistent portfolio and cannot route orders,
 wallet actions, transfers, or credentials.
