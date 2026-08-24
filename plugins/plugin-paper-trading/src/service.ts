@@ -54,7 +54,7 @@ export class PaperTradingService extends Service {
     );
     const service = new PaperTradingService(runtime, stateStore);
     logger.info(
-      { src: "plugin-paper-trading", mode: "PAPER", cashMicros: "20000000" },
+      { src: "plugin-paper-trading", mode: "PAPER", ...service.snapshot() },
       "[PaperTradingService] Ready",
     );
     return service;
