@@ -10,7 +10,7 @@ import {
 import { ASSET_SCALE, USD_SCALE } from "./types.js";
 import { getPaperTradingService } from "./service.js";
 
-const OPERATIONS = ["status", "buy", "sell"] as const;
+const OPERATIONS = ["status", "quote", "buy", "sell"] as const;
 type Operation = (typeof OPERATIONS)[number];
 
 function params(options?: HandlerOptions): Record<string, unknown> {
@@ -95,11 +95,11 @@ export const paperTradingAction: Action = {
     "SIMULATE_TRADE",
   ],
   description:
-    "Owner-only wallet-free paper trading. status reads the simulated portfolio; buy and sell create deterministic simulated fills from an explicit fresh quote. Never routes live orders, wallets, transfers, or credentials.",
+    "Owner-only wallet-free paper trading. status reads the simulated portfolio; quote reads a keyless public BTC/ETH quote; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
   descriptionCompressed:
     "paper-only portfolio status, simulated buy, simulated sell; no live execution",
   routingHint:
-    "Use only when the owner explicitly asks for paper/simulated trading or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, decimal priceUsd, quoteSource, quoteObservedAt, and idempotencyKey.",
+    "Use only when the owner explicitly asks for paper/simulated trading, a BTC/ETH public quote, or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, and idempotencyKey; omit quote fields to use the read-only public source.",
   roleGate: { minRole: "OWNER" },
   validate: async () => true,
   handler: async (
@@ -113,7 +113,7 @@ export const paperTradingAction: Action = {
     const rawOperation = text(input.operation)?.toLowerCase() ?? "status";
     if (!(OPERATIONS as readonly string[]).includes(rawOperation)) {
       return failure(
-        "Paper trading supports status, buy, or sell only.",
+        "Paper trading supports status, quote, buy, or sell only.",
         "PAPER_UNKNOWN_OPERATION",
       );
     }
@@ -135,20 +135,61 @@ export const paperTradingAction: Action = {
       };
     }
 
+    if (operation === "quote") {
+      try {
+        const symbol = text(input.symbol)?.toUpperCase();
+        if (!symbol) return failure("A public quote requires BTC or ETH.", "PAPER_MISSING_SYMBOL");
+        const quote = await getPaperTradingService(runtime).publicQuote(symbol);
+        const output = [
+          "PUBLIC MARKET DATA / READ ONLY",
+          `Symbol: ${quote.symbol}`,
+          `Price: ${formatUsdMicros(quote.priceMicros.toString())}`,
+          `Observed: ${new Date(quote.observedAtMs).toISOString()}`,
+          `Source: ${quote.source}`,
+        ].join("\n");
+        await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
+        return {
+          success: true,
+          text: output,
+          userFacingText: output,
+          verifiedUserFacing: true,
+          turnComplete: true,
+          data: { actionName: "PAPER_TRADING", mode: "READ_ONLY", operation, quote: {
+            ...quote,
+            priceMicros: quote.priceMicros.toString(),
+          } },
+        };
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "PUBLIC_QUOTE_FAILED";
+        return failure("The public quote could not be verified.", code);
+      }
+    }
+
     try {
       const symbol = text(input.symbol)?.toUpperCase();
-      const quoteSource = text(input.quoteSource);
       const idempotencyKey = text(input.idempotencyKey);
-      const observedAt = Date.parse(text(input.quoteObservedAt) ?? "");
-      if (!symbol || !quoteSource || !idempotencyKey || !Number.isFinite(observedAt)) {
+      if (!symbol || !idempotencyKey) {
         return failure(
-          "A simulated order requires symbol, quantity, priceUsd, quoteSource, quoteObservedAt, and idempotencyKey.",
+          "A simulated order requires symbol, quantity, and idempotencyKey.",
           "PAPER_MISSING_ORDER_FIELDS",
         );
       }
       const quantityAtomic = decimalToFixed(input.quantity, ASSET_SCALE, 8);
-      const priceMicros = decimalToFixed(input.priceUsd, USD_SCALE, 6);
-      const receipt = getPaperTradingService(runtime).execute({
+      const suppliedPrice = text(input.priceUsd);
+      const service = getPaperTradingService(runtime);
+      const publicQuote = suppliedPrice ? undefined : await service.publicQuote(symbol);
+      const quoteSource = publicQuote?.source ?? text(input.quoteSource);
+      const observedAt = publicQuote?.observedAtMs ??
+        Date.parse(text(input.quoteObservedAt) ?? "");
+      if (!quoteSource || !Number.isFinite(observedAt)) {
+        return failure(
+          "A supplied simulation quote requires quoteSource and quoteObservedAt.",
+          "PAPER_MISSING_QUOTE_FIELDS",
+        );
+      }
+      const priceMicros = publicQuote?.priceMicros ??
+        decimalToFixed(suppliedPrice, USD_SCALE, 6);
+      const receipt = service.execute({
         idempotencyKey,
         side: operation,
         symbol,
@@ -200,7 +241,7 @@ export const paperTradingAction: Action = {
   parameters: [
     {
       name: "operation",
-      description: "Paper operation: status, buy, or sell.",
+      description: "Paper operation: status, quote, buy, or sell.",
       required: true,
       schema: { type: "string", enum: [...OPERATIONS] },
     },
