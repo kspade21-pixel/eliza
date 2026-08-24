@@ -150,6 +150,8 @@ export function runPaperBacktest(
     policy: { initialCashMicros: policy.initialCashMicros.toString(),
       allocationMicros: policy.allocationMicros.toString(),
       minimumReserveMicros: policy.minimumReserveMicros.toString(),
+      requestedFeeBps: policy.feeBps.toString(),
+      requestedSlippageBps: policy.slippageBps.toString(),
       fastWindow: policy.fastWindow, slowWindow: policy.slowWindow },
     scenarios: SCENARIOS.map(({ name, feeBps, slippageBps }) =>
       ({ name, feeBps: feeBps.toString(), slippageBps: slippageBps.toString() })),
