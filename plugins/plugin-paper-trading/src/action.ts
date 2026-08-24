@@ -173,7 +173,7 @@ export const paperTradingAction: Action = {
       try {
         const symbol = text(input.symbol)?.toUpperCase();
         const rawDays = typeof input.days === "number" ? input.days : Number(text(input.days) ?? "90");
-        if (!symbol || ![30, 90, 180, 365].includes(rawDays)) {
+        if (!symbol || !["BTC", "ETH"].includes(symbol) || ![30, 90, 180, 365].includes(rawDays)) {
           return failure(
             "A paper backtest requires BTC or ETH and days of 30, 90, 180, or 365.",
             "PAPER_INVALID_BACKTEST_PARAMETERS",
