@@ -43,6 +43,21 @@ bun run --cwd plugins/plugin-paper-trading typecheck
 bun run --cwd plugins/plugin-paper-trading build
 ```
 
-This first release is the simulator core. Read-only public market-data ingestion,
-durable storage, and Eliza chat actions must be added and tested separately
-before explicitly enabling the plugin. Live execution is out of scope.
+## Chat runtime integration
+
+The owner-only `PAPER_TRADING` action supports:
+
+- `operation=status` — read the simulated ledger and risk state;
+- `operation=buy` — deterministic simulated spot buy;
+- `operation=sell` — deterministic simulated spot sell.
+
+Buy and sell require an explicit decimal quantity, decimal USD quote, quote
+source, ISO-8601 observation time, and idempotency key. Quotes older than 60
+seconds, future quotes, missing provenance, and symbols outside BTC/ETH are
+rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
+simulation-only.
+
+The runtime service is intentionally in-memory in this release. Restarting Eliza
+resets the simulated ledger to $20 and clears its audit chain. Durable storage
+and read-only public market-data ingestion require separate reviewed changes.
+Live execution remains out of scope.
