@@ -16,6 +16,16 @@
       },
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "eliza-source": {
+        "types": "./src/plugin.ts",
+        "import": "./src/plugin.ts",
+        "default": "./src/plugin.ts"
+      },
+      "import": "./dist/plugin.js",
+      "default": "./dist/plugin.js"
     }
   },
   "scripts": {
@@ -28,5 +38,10 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
-  "files": ["dist"]
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@elizaos/core": "workspace:*"
+  }
 }
