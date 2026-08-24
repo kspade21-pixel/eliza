@@ -94,13 +94,16 @@ export const paperTradingAction: Action = {
     "PAPER_PORTFOLIO",
     "PAPER_STATUS",
     "SIMULATE_TRADE",
+    "PAPER_BACKTEST",
+    "BACKTEST_CRYPTO",
+    "HISTORICAL_PAPER_TEST",
   ],
   description:
     "Owner-only wallet-free paper trading. status reads the simulated portfolio; quote reads a keyless public BTC/ETH quote; backtest evaluates a deterministic moving-average strategy on public historical data; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
   descriptionCompressed:
-    "paper-only portfolio status, simulated buy, simulated sell; no live execution",
+    "paper-only portfolio, public quote, historical backtest, simulated buy/sell; no live execution",
   routingHint:
-    "Use only when the owner explicitly asks for paper/simulated trading, a BTC/ETH public quote, or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, and idempotencyKey; omit quote fields to use the read-only public source.",
+    "Use only when the owner explicitly asks for paper/simulated trading, a BTC/ETH public quote, a historical paper backtest/research result, or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, and idempotencyKey; omit quote fields to use the read-only public source.",
   roleGate: { minRole: "OWNER" },
   validate: async () => true,
   handler: async (
@@ -178,7 +181,11 @@ export const paperTradingAction: Action = {
         }
         const days = rawDays as 30 | 90 | 180 | 365;
         const prices = await getPaperTradingService(runtime).publicHistory(symbol, days);
-        const result = runPaperBacktest(prices);
+        const result = runPaperBacktest(prices, undefined, {
+          symbol,
+          source: "coingecko-keyless",
+          windowDays: days,
+        });
         const formatPercent = (bps: string): string => {
           const value = BigInt(bps);
           const sign = value < 0n ? "-" : "";
@@ -198,7 +205,8 @@ export const paperTradingAction: Action = {
           `Maximum drawdown: ${formatPercent(result.maxDrawdownBps)}`,
           `Final research signal: ${result.finalSignal}`,
           `Dataset as of: ${new Date(result.asOfMs).toISOString()}`,
-          `Dataset SHA-256: ${result.dataHash}`,
+          `Evidence SHA-256: ${result.evidenceHash}`,
+          `Algorithm: ${result.algorithmVersion}`,
           "This is a historical simulation, not a profit forecast or live-trade instruction.",
         ].join("\n");
         await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
