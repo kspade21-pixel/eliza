@@ -1,0 +1,249 @@
+import {
+  type Action,
+  type ActionResult,
+  type HandlerCallback,
+  type HandlerOptions,
+  type IAgentRuntime,
+  type Memory,
+  type State,
+} from "@elizaos/core";
+import { ASSET_SCALE, USD_SCALE } from "./types.js";
+import { getPaperTradingService } from "./service.js";
+
+const OPERATIONS = ["status", "buy", "sell"] as const;
+type Operation = (typeof OPERATIONS)[number];
+
+function params(options?: HandlerOptions): Record<string, unknown> {
+  const value = options?.parameters;
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function text(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function decimalToFixed(value: unknown, scale: bigint, decimals: number): bigint {
+  const raw =
+    typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : text(value);
+  if (!raw || !new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${decimals}})?$`).test(raw)) {
+    throw new Error("INVALID_POSITIVE_DECIMAL");
+  }
+  const [whole = "0", fraction = ""] = raw.split(".");
+  const padded = fraction.padEnd(decimals, "0");
+  const result =
+    BigInt(whole) * scale + BigInt(padded.length > 0 ? padded : "0");
+  if (result <= 0n) throw new Error("INVALID_POSITIVE_DECIMAL");
+  return result;
+}
+
+function usd(micros: string): string {
+  const value = BigInt(micros);
+  const sign = value < 0n ? "-" : "";
+  const absolute = value < 0n ? -value : value;
+  const dollars = absolute / USD_SCALE;
+  const cents = ((absolute % USD_SCALE) / 10_000n)
+    .toString()
+    .padStart(2, "0");
+  return `${sign}$${dollars}.${cents}`;
+}
+
+function statusText(runtime: IAgentRuntime): string {
+  const snapshot = getPaperTradingService(runtime).snapshot();
+  const positions =
+    snapshot.positions.length === 0
+      ? "none"
+      : snapshot.positions
+          .map(
+            (position) =>
+              `${position.symbol} quantityAtomic=${position.quantityAtomic}`,
+          )
+          .join(", ");
+  return [
+    "PAPER / SIMULATION ONLY",
+    `Cash: ${usd(snapshot.cashMicros)}`,
+    `Equity: ${usd(snapshot.equityMicros)}`,
+    `Gross exposure: ${usd(snapshot.grossExposureMicros)}`,
+    `Realized P&L: ${usd(snapshot.realizedPnlMicros)}`,
+    `Risk halt: ${snapshot.halted ? "ACTIVE" : "inactive"}`,
+    `Positions: ${positions}`,
+    `Audit events: ${snapshot.auditLength}`,
+  ].join("\n");
+}
+
+function failure(message: string, code: string): ActionResult {
+  return {
+    success: false,
+    text: message,
+    error: code,
+    data: { actionName: "PAPER_TRADING", mode: "PAPER", error: code },
+  };
+}
+
+export const paperTradingAction: Action = {
+  name: "PAPER_TRADING",
+  contexts: ["general"],
+  similes: [
+    "PAPER_TRADE",
+    "PAPER_BUY",
+    "PAPER_SELL",
+    "PAPER_PORTFOLIO",
+    "PAPER_STATUS",
+    "SIMULATE_TRADE",
+  ],
+  description:
+    "Owner-only wallet-free paper trading. status reads the simulated portfolio; buy and sell create deterministic simulated fills from an explicit fresh quote. Never routes live orders, wallets, transfers, or credentials.",
+  descriptionCompressed:
+    "paper-only portfolio status, simulated buy, simulated sell; no live execution",
+  routingHint:
+    "Use only when the owner explicitly asks for paper/simulated trading or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, decimal priceUsd, quoteSource, quoteObservedAt, and idempotencyKey.",
+  roleGate: { minRole: "OWNER" },
+  validate: async () => true,
+  handler: async (
+    runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State,
+    options?: HandlerOptions,
+    callback?: HandlerCallback,
+  ): Promise<ActionResult> => {
+    const input = params(options);
+    const rawOperation = text(input.operation)?.toLowerCase() ?? "status";
+    if (!(OPERATIONS as readonly string[]).includes(rawOperation)) {
+      return failure(
+        "Paper trading supports status, buy, or sell only.",
+        "PAPER_UNKNOWN_OPERATION",
+      );
+    }
+    const operation = rawOperation as Operation;
+    if (operation === "status") {
+      const output = statusText(runtime);
+      await callback?.({
+        text: output,
+        source: "action",
+        action: "PAPER_TRADING",
+      });
+      return {
+        success: true,
+        text: output,
+        userFacingText: output,
+        verifiedUserFacing: true,
+        turnComplete: true,
+        data: { actionName: "PAPER_TRADING", mode: "PAPER", operation },
+      };
+    }
+
+    try {
+      const symbol = text(input.symbol)?.toUpperCase();
+      const quoteSource = text(input.quoteSource);
+      const idempotencyKey = text(input.idempotencyKey);
+      const observedAt = Date.parse(text(input.quoteObservedAt) ?? "");
+      if (!symbol || !quoteSource || !idempotencyKey || !Number.isFinite(observedAt)) {
+        return failure(
+          "A simulated order requires symbol, quantity, priceUsd, quoteSource, quoteObservedAt, and idempotencyKey.",
+          "PAPER_MISSING_ORDER_FIELDS",
+        );
+      }
+      const quantityAtomic = decimalToFixed(input.quantity, ASSET_SCALE, 8);
+      const priceMicros = decimalToFixed(input.priceUsd, USD_SCALE, 6);
+      const receipt = getPaperTradingService(runtime).execute({
+        idempotencyKey,
+        side: operation,
+        symbol,
+        quantityAtomic,
+        quote: {
+          symbol,
+          priceMicros,
+          observedAtMs: observedAt,
+          source: quoteSource,
+        },
+        requestedAtMs: Date.now(),
+      });
+      const output = [
+        "PAPER / SIMULATION ONLY",
+        receipt.accepted ? "Simulated fill accepted." : "Simulated order rejected.",
+        `Reason: ${receipt.reason}`,
+        `Symbol: ${receipt.symbol}`,
+        `Quantity atomic: ${receipt.quantityAtomic}`,
+        ...(receipt.notionalMicros
+          ? [`Notional: ${usd(receipt.notionalMicros)}`]
+          : []),
+        ...(receipt.feeMicros ? [`Modeled fee: ${usd(receipt.feeMicros)}`] : []),
+        `Audit receipt: ${receipt.hash}`,
+      ].join("\n");
+      await callback?.({
+        text: output,
+        source: "action",
+        action: "PAPER_TRADING",
+      });
+      return {
+        success: receipt.accepted,
+        text: output,
+        ...(receipt.accepted ? {} : { error: receipt.reason }),
+        userFacingText: output,
+        verifiedUserFacing: true,
+        turnComplete: true,
+        data: {
+          actionName: "PAPER_TRADING",
+          mode: "PAPER",
+          operation,
+          receipt,
+        },
+      };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "PAPER_INVALID_ORDER";
+      return failure("The simulated order parameters were invalid.", code);
+    }
+  },
+  parameters: [
+    {
+      name: "operation",
+      description: "Paper operation: status, buy, or sell.",
+      required: true,
+      schema: { type: "string", enum: [...OPERATIONS] },
+    },
+    {
+      name: "symbol",
+      description: "Allowlisted simulated asset symbol: BTC or ETH.",
+      required: false,
+      schema: { type: "string", enum: ["BTC", "ETH"] },
+    },
+    {
+      name: "quantity",
+      description:
+        "Positive decimal asset quantity with at most 8 decimal places.",
+      required: false,
+      schema: { type: "string", pattern: "^(?:0|[1-9]\\d*)(?:\\.\\d{1,8})?$" },
+    },
+    {
+      name: "priceUsd",
+      description:
+        "Positive decimal USD quote with at most 6 decimal places, supplied only for simulation.",
+      required: false,
+      schema: { type: "string", pattern: "^(?:0|[1-9]\\d*)(?:\\.\\d{1,6})?$" },
+    },
+    {
+      name: "quoteSource",
+      description: "Public source/provenance label for the supplied quote.",
+      required: false,
+      schema: { type: "string", minLength: 1 },
+    },
+    {
+      name: "quoteObservedAt",
+      description: "ISO-8601 observation time for freshness validation.",
+      required: false,
+      schema: { type: "string", format: "date-time" },
+    },
+    {
+      name: "idempotencyKey",
+      description: "Unique key preventing a simulated order from filling twice.",
+      required: false,
+      schema: { type: "string", minLength: 1 },
+    },
+  ],
+  examples: [],
+};
