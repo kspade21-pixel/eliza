@@ -84,6 +84,10 @@ export class PaperTradingService extends Service {
     return this.quoteSource.quote(symbol);
   }
 
+  async publicHistory(symbol: string, days: 30 | 90 | 180 | 365) {
+    return this.quoteSource.history(symbol, days);
+  }
+
   snapshot(): PaperSnapshot {
     return this.engine.snapshot();
   }

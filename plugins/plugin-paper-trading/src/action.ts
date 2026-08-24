@@ -7,10 +7,11 @@ import {
   type Memory,
   type State,
 } from "@elizaos/core";
+import { runPaperBacktest } from "./backtest.js";
 import { ASSET_SCALE, USD_SCALE } from "./types.js";
 import { getPaperTradingService } from "./service.js";
 
-const OPERATIONS = ["status", "quote", "buy", "sell"] as const;
+const OPERATIONS = ["status", "quote", "backtest", "buy", "sell"] as const;
 type Operation = (typeof OPERATIONS)[number];
 
 function params(options?: HandlerOptions): Record<string, unknown> {
@@ -93,13 +94,16 @@ export const paperTradingAction: Action = {
     "PAPER_PORTFOLIO",
     "PAPER_STATUS",
     "SIMULATE_TRADE",
+    "PAPER_BACKTEST",
+    "BACKTEST_CRYPTO",
+    "HISTORICAL_PAPER_TEST",
   ],
   description:
-    "Owner-only wallet-free paper trading. status reads the simulated portfolio; quote reads a keyless public BTC/ETH quote; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
+    "Owner-only wallet-free paper trading. status reads the simulated portfolio; quote reads a keyless public BTC/ETH quote; backtest evaluates a deterministic moving-average strategy on public historical data; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
   descriptionCompressed:
-    "paper-only portfolio status, simulated buy, simulated sell; no live execution",
+    "paper-only portfolio, public quote, historical backtest, simulated buy/sell; no live execution",
   routingHint:
-    "Use only when the owner explicitly asks for paper/simulated trading, a BTC/ETH public quote, or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, and idempotencyKey; omit quote fields to use the read-only public source.",
+    "Use only when the owner explicitly asks for paper/simulated trading, a BTC/ETH public quote, a historical paper backtest/research result, or the paper portfolio. Never use for a live trade, wallet, swap, transfer, withdrawal, deposit, leverage, short, or credential request. buy/sell require symbol, decimal quantity, and idempotencyKey; omit quote fields to use the read-only public source.",
   roleGate: { minRole: "OWNER" },
   validate: async () => true,
   handler: async (
@@ -113,7 +117,7 @@ export const paperTradingAction: Action = {
     const rawOperation = text(input.operation)?.toLowerCase() ?? "status";
     if (!(OPERATIONS as readonly string[]).includes(rawOperation)) {
       return failure(
-        "Paper trading supports status, quote, buy, or sell only.",
+        "Paper trading supports status, quote, backtest, buy, or sell only.",
         "PAPER_UNKNOWN_OPERATION",
       );
     }
@@ -162,6 +166,79 @@ export const paperTradingAction: Action = {
       } catch (error) {
         const code = error instanceof Error ? error.message : "PUBLIC_QUOTE_FAILED";
         return failure("The public quote could not be verified.", code);
+      }
+    }
+
+    if (operation === "backtest") {
+      try {
+        const symbol = text(input.symbol)?.toUpperCase();
+        const rawDays = typeof input.days === "number" ? input.days : Number(text(input.days) ?? "90");
+        if (!symbol || !["BTC", "ETH"].includes(symbol) || ![30, 90, 180, 365].includes(rawDays)) {
+          return failure(
+            "A paper backtest requires BTC or ETH and days of 30, 90, 180, or 365.",
+            "PAPER_INVALID_BACKTEST_PARAMETERS",
+          );
+        }
+        const days = rawDays as 30 | 90 | 180 | 365;
+        const prices = await getPaperTradingService(runtime).publicHistory(symbol, days);
+        const result = runPaperBacktest(prices, undefined, {
+          symbol,
+          source: "coingecko-keyless",
+          windowDays: days,
+          retrievedAtMs: Date.now(),
+        });
+        const formatPercent = (bps: string): string => {
+          const value = BigInt(bps);
+          const sign = value < 0n ? "-" : "";
+          const absolute = value < 0n ? -value : value;
+          return `${sign}${absolute / 100n}.${(absolute % 100n)
+            .toString()
+            .padStart(2, "0")}%`;
+        };
+        const output = [
+          "UNVERIFIED RESEARCH / PAPER BACKTEST ONLY",
+          `Symbol: ${symbol}`,
+          `Historical bars: ${result.bars}`,
+          `Decision bars: ${result.decisionBars}`,
+          `Simulated trades / round trips: ${result.trades} / ${result.roundTrips}`,
+          `Starting equity: ${formatUsdMicros(result.initialEquityMicros)}`,
+          `Mark-to-market equity / return: ${formatUsdMicros(result.markToMarketEquityMicros)} / ${formatPercent(result.markToMarketReturnBps)}`,
+          `Liquidation-value equity / return: ${formatUsdMicros(result.liquidationValueEquityMicros)} / ${formatPercent(result.liquidationReturnBps)}`,
+          `Base net comparison vs cash / buy-and-hold: ${formatPercent(result.scenarios[1]!.netVsCashBps)} / ${formatPercent(result.scenarios[1]!.netVsBuyHoldBps)} (not a profitability ranking)`,
+          `Liquidation-adjusted strategy / buy-and-hold max drawdown: ${formatPercent(result.scenarios[1]!.liquidationAdjustedMaxDrawdownBps)} / ${formatPercent(result.scenarios[1]!.buyHoldLiquidationAdjustedMaxDrawdownBps)}`,
+          `Coverage: ${formatPercent(result.coverage.coverageBps)}; gaps: ${result.coverage.gapCount}; missing intervals: ${result.coverage.missingDailyIntervals}`,
+          ...result.scenarios.map((scenario) => `Friction ${scenario.name}: fee ${scenario.feeBps} bps, spread ${scenario.spreadBps} bps, market impact ${scenario.marketImpactBps} bps [${scenario.costProvenance}]; liquidation return ${formatPercent(scenario.liquidationReturnBps)}; ${scenario.assumptions}`),
+          ...result.warnings.map((warning) => `Warning: ${warning}`),
+          `Final research signal: ${result.finalSignal}`,
+          `Dataset as of: ${new Date(result.asOfMs).toISOString()}`,
+          `Retrieved at: ${new Date(result.runManifest.retrievedAtMs!).toISOString()}`,
+          `Reproducible input SHA-256: ${result.runManifest.inputSha256}`,
+          `Manifest schema: ${result.runManifest.schemaVersion}`,
+          `Execution: ${result.runManifest.executionSemantics}`,
+          `Comparison status: ${result.scenarios[1]!.comparisonStatus}; venue basis: ${result.runManifest.venueBasis}`,
+          `Drawdown convention: ${result.runManifest.drawdownConvention}`,
+          `Algorithm: ${result.algorithmVersion}`,
+          "UNVERIFIED RESEARCH: observations are not asserted to be market opens. This is not a forecast, validation, or live-trade instruction.",
+        ].join("\n");
+        await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
+        return {
+          success: true,
+          text: output,
+          userFacingText: output,
+          verifiedUserFacing: false,
+          turnComplete: true,
+          data: {
+            actionName: "PAPER_TRADING",
+            mode: "PAPER_BACKTEST",
+            operation,
+            symbol,
+            days,
+            result,
+          },
+        };
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "PAPER_BACKTEST_FAILED";
+        return failure("The paper backtest could not be completed safely.", code);
       }
     }
 
@@ -249,9 +326,15 @@ export const paperTradingAction: Action = {
   parameters: [
     {
       name: "operation",
-      description: "Paper operation: status, quote, buy, or sell.",
+      description: "Paper operation: status, quote, backtest, buy, or sell.",
       required: true,
       schema: { type: "string", enum: [...OPERATIONS] },
+    },
+    {
+      name: "days",
+      description: "Historical backtest window: 30, 90, 180, or 365 days.",
+      required: false,
+      schema: { type: "number" },
     },
     {
       name: "symbol",
