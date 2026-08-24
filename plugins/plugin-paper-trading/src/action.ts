@@ -11,7 +11,7 @@ import { runPaperBacktest } from "./backtest.js";
 import { ASSET_SCALE, USD_SCALE } from "./types.js";
 import { getPaperTradingService } from "./service.js";
 
-const OPERATIONS = ["status", "quote", "backtest", "buy", "sell"] as const;
+const OPERATIONS = ["status", "report", "quote", "backtest", "buy", "sell"] as const;
 type Operation = (typeof OPERATIONS)[number];
 
 function params(options?: HandlerOptions): Record<string, unknown> {
@@ -75,6 +75,46 @@ function statusText(runtime: IAgentRuntime): string {
   ].join("\n");
 }
 
+function reportResult(runtime: IAgentRuntime): ActionResult {
+  const service = getPaperTradingService(runtime);
+  const snapshot = service.snapshot();
+  const auditChainValid = service.verifyAuditChain();
+  const riskAlerts: string[] = [];
+  if (!auditChainValid) riskAlerts.push("AUDIT_CHAIN_INVALID");
+  if (snapshot.halted) riskAlerts.push("RISK_HALT_ACTIVE");
+  if (BigInt(snapshot.realizedPnlMicros) < 0n) {
+    riskAlerts.push("REALIZED_LOSS_PRESENT");
+  }
+  const output = [
+    "PAPER PERFORMANCE / RISK REPORT",
+    "SIMULATION ONLY. No live account, wallet, order, or transfer is represented.",
+    `Cash: ${formatUsdMicros(snapshot.cashMicros)}`,
+    `Equity: ${formatUsdMicros(snapshot.equityMicros)}`,
+    `Gross exposure: ${formatUsdMicros(snapshot.grossExposureMicros)}`,
+    `Realized P&L: ${formatUsdMicros(snapshot.realizedPnlMicros)}`,
+    `Open positions: ${snapshot.positions.length}`,
+    `Audit events: ${snapshot.auditLength}`,
+    `Audit chain: ${auditChainValid ? "valid" : "INVALID"}`,
+    `Risk alerts: ${riskAlerts.length === 0 ? "none" : riskAlerts.join(", ")}`,
+  ].join("\n");
+  return {
+    success: auditChainValid,
+    text: output,
+    ...(auditChainValid ? {} : { error: "PAPER_AUDIT_CHAIN_INVALID" }),
+    userFacingText: output,
+    verifiedUserFacing: auditChainValid,
+    turnComplete: true,
+    data: {
+      actionName: "PAPER_TRADING",
+      mode: "PAPER_REPORT",
+      operation: "report",
+      auditChainValid,
+      riskAlerts,
+      snapshot,
+    },
+  };
+}
+
 function failure(message: string, code: string): ActionResult {
   return {
     success: false,
@@ -93,13 +133,15 @@ export const paperTradingAction: Action = {
     "PAPER_SELL",
     "PAPER_PORTFOLIO",
     "PAPER_STATUS",
+    "PAPER_REPORT",
+    "PAPER_RISK_REPORT",
     "SIMULATE_TRADE",
     "PAPER_BACKTEST",
     "BACKTEST_CRYPTO",
     "HISTORICAL_PAPER_TEST",
   ],
   description:
-    "Owner-only wallet-free paper trading. status reads the simulated portfolio; quote reads a keyless public BTC/ETH quote; backtest evaluates a deterministic moving-average strategy on public historical data; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
+    "Owner-only wallet-free paper trading. status reads the simulated portfolio; report reads performance, audit integrity, and risk alerts; quote reads a keyless public BTC/ETH quote; backtest evaluates a deterministic moving-average strategy on public historical data; buy and sell create deterministic simulated fills. Never routes live orders, wallets, transfers, or credentials.",
   descriptionCompressed:
     "paper-only portfolio, public quote, historical backtest, simulated buy/sell; no live execution",
   routingHint:
@@ -117,7 +159,7 @@ export const paperTradingAction: Action = {
     const rawOperation = text(input.operation)?.toLowerCase() ?? "status";
     if (!(OPERATIONS as readonly string[]).includes(rawOperation)) {
       return failure(
-        "Paper trading supports status, quote, backtest, buy, or sell only.",
+        "Paper trading supports status, report, quote, backtest, buy, or sell only.",
         "PAPER_UNKNOWN_OPERATION",
       );
     }
@@ -137,6 +179,16 @@ export const paperTradingAction: Action = {
         turnComplete: true,
         data: { actionName: "PAPER_TRADING", mode: "PAPER", operation },
       };
+    }
+
+    if (operation === "report") {
+      const result = reportResult(runtime);
+      await callback?.({
+        text: result.text,
+        source: "action",
+        action: "PAPER_TRADING",
+      });
+      return result;
     }
 
     if (operation === "quote") {
@@ -326,7 +378,7 @@ export const paperTradingAction: Action = {
   parameters: [
     {
       name: "operation",
-      description: "Paper operation: status, quote, backtest, buy, or sell.",
+      description: "Paper operation: status, report, quote, backtest, buy, or sell.",
       required: true,
       schema: { type: "string", enum: [...OPERATIONS] },
     },
