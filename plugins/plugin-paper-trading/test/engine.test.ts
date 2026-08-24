@@ -141,6 +141,34 @@ describe("PaperTradingEngine", () => {
     });
   });
 
+  it("restores balances, positions, audit receipts, and idempotency", () => {
+    const first = new PaperTradingEngine();
+    const request = order();
+    const receipt = first.execute(request);
+    const restored = PaperTradingEngine.fromState(first.exportState());
+
+    expect(restored.snapshot()).toEqual(first.snapshot());
+    expect(restored.execute(request)).toEqual(receipt);
+    expect(restored.audit).toHaveLength(1);
+    expect(restored.verifyAuditChain()).toBe(true);
+  });
+
+  it("fails closed when durable state or its audit chain is altered", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const cashTamper = engine.exportState();
+    cashTamper.cashMicros = "20000000";
+    expect(() => PaperTradingEngine.fromState(cashTamper)).toThrow(
+      "INVALID_PAPER_STATE_CASH_MISMATCH",
+    );
+
+    const auditTamper = engine.exportState();
+    auditTamper.audit[0]!.reason = "ALTERED";
+    expect(() => PaperTradingEngine.fromState(auditTamper)).toThrow(
+      "INVALID_PAPER_STATE_AUDIT_HASH",
+    );
+  });
+
   it("detects audit tampering", () => {
     const engine = new PaperTradingEngine();
     engine.execute(order());
