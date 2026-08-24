@@ -2860,6 +2860,15 @@
         "zod": "^4.4.3",
       },
     },
+    "plugins/plugin-paper-trading": {
+      "name": "@elizaos/plugin-paper-trading",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@typescript/native": "npm:typescript@^7.0.2",
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.10",
+      },
+    },
     "plugins/plugin-pdf": {
       "name": "@elizaos/plugin-pdf",
       "version": "2.0.3-beta.7",
@@ -4285,6 +4294,8 @@
     "@elizaos/plugin-omarchy": ["@elizaos/plugin-omarchy@workspace:plugins/plugin-omarchy"],
 
     "@elizaos/plugin-openai": ["@elizaos/plugin-openai@workspace:plugins/plugin-openai"],
+
+    "@elizaos/plugin-paper-trading": ["@elizaos/plugin-paper-trading@workspace:plugins/plugin-paper-trading"],
 
     "@elizaos/plugin-pdf": ["@elizaos/plugin-pdf@workspace:plugins/plugin-pdf"],
 
