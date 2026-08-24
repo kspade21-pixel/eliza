@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PAPER_POLICY, PaperTradingEngine } from "../src/index.js";
+import {
+  DEFAULT_PAPER_POLICY,
+  formatUsdMicros,
+  PaperTradingEngine,
+} from "../src/index.js";
 import type { PaperOrder } from "../src/types.js";
 
 const NOW = 1_787_545_600_000;
@@ -25,6 +29,12 @@ function order(overrides: Partial<PaperOrder> = {}): PaperOrder {
 }
 
 describe("PaperTradingEngine", () => {
+  it("renders micro-fees without hiding them as zero cents", () => {
+    expect(formatUsdMicros("501")).toBe("$0.000501");
+    expect(formatUsdMicros("19498999")).toBe("$19.498999");
+    expect(formatUsdMicros("-6000")).toBe("-$0.006000");
+  });
+
   it("starts with exactly $20 simulated cash and no exposure", () => {
     const engine = new PaperTradingEngine();
     expect(engine.snapshot()).toMatchObject({

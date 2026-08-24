@@ -42,15 +42,13 @@ function decimalToFixed(value: unknown, scale: bigint, decimals: number): bigint
   return result;
 }
 
-function usd(micros: string): string {
+export function formatUsdMicros(micros: string): string {
   const value = BigInt(micros);
   const sign = value < 0n ? "-" : "";
   const absolute = value < 0n ? -value : value;
   const dollars = absolute / USD_SCALE;
-  const cents = ((absolute % USD_SCALE) / 10_000n)
-    .toString()
-    .padStart(2, "0");
-  return `${sign}$${dollars}.${cents}`;
+  const fraction = (absolute % USD_SCALE).toString().padStart(6, "0");
+  return `${sign}$${dollars}.${fraction}`;
 }
 
 function statusText(runtime: IAgentRuntime): string {
@@ -66,10 +64,10 @@ function statusText(runtime: IAgentRuntime): string {
           .join(", ");
   return [
     "PAPER / SIMULATION ONLY",
-    `Cash: ${usd(snapshot.cashMicros)}`,
-    `Equity: ${usd(snapshot.equityMicros)}`,
-    `Gross exposure: ${usd(snapshot.grossExposureMicros)}`,
-    `Realized P&L: ${usd(snapshot.realizedPnlMicros)}`,
+    `Cash: ${formatUsdMicros(snapshot.cashMicros)}`,
+    `Equity: ${formatUsdMicros(snapshot.equityMicros)}`,
+    `Gross exposure: ${formatUsdMicros(snapshot.grossExposureMicros)}`,
+    `Realized P&L: ${formatUsdMicros(snapshot.realizedPnlMicros)}`,
     `Risk halt: ${snapshot.halted ? "ACTIVE" : "inactive"}`,
     `Positions: ${positions}`,
     `Audit events: ${snapshot.auditLength}`,
@@ -170,9 +168,9 @@ export const paperTradingAction: Action = {
         `Symbol: ${receipt.symbol}`,
         `Quantity atomic: ${receipt.quantityAtomic}`,
         ...(receipt.notionalMicros
-          ? [`Notional: ${usd(receipt.notionalMicros)}`]
+          ? [`Notional: ${formatUsdMicros(receipt.notionalMicros)}`]
           : []),
-        ...(receipt.feeMicros ? [`Modeled fee: ${usd(receipt.feeMicros)}`] : []),
+        ...(receipt.feeMicros ? [`Modeled fee: ${formatUsdMicros(receipt.feeMicros)}`] : []),
         `Audit receipt: ${receipt.hash}`,
       ].join("\n");
       await callback?.({
