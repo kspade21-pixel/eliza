@@ -262,13 +262,13 @@ export class PaperTradingEngine {
       throw new Error("INVALID_PAPER_STATE_VERSION");
     }
     const parseUnsigned = (value: string, field: string): bigint => {
-      if (typeof value !== "string" || !/^(?:0|[1-9]\\d*)$/.test(value)) {
+      if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/.test(value)) {
         throw new Error(`INVALID_PAPER_STATE_${field}`);
       }
       return BigInt(value);
     };
     const parseSigned = (value: string, field: string): bigint => {
-      if (typeof value !== "string" || !/^-?(?:0|[1-9]\\d*)$/.test(value)) {
+      if (typeof value !== "string" || !/^-?(?:0|[1-9]\d*)$/.test(value)) {
         throw new Error(`INVALID_PAPER_STATE_${field}`);
       }
       return BigInt(value);
