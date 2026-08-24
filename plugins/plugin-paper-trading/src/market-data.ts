@@ -51,7 +51,7 @@ export class CoinGeckoKeylessQuoteSource {
       throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
     }
     const body = await response.text();
-    if (body.length > 1_048_576) {
+    if (new TextEncoder().encode(body).byteLength > 1_048_576) {
       throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
     }
     const parsed = JSON.parse(body) as { prices?: unknown };
@@ -59,7 +59,7 @@ export class CoinGeckoKeylessQuoteSource {
       throw new Error("PUBLIC_HISTORY_MALFORMED");
     }
 
-    const prices = parsed.prices.map((row): HistoricalPrice => {
+    const rawPrices = parsed.prices.map((row): HistoricalPrice => {
       if (
         !Array.isArray(row) ||
         row.length < 2 ||
@@ -76,7 +76,21 @@ export class CoinGeckoKeylessQuoteSource {
         priceMicros: BigInt(Math.round(row[1] * Number(USD_SCALE))),
       };
     });
-    if (prices.length < 20) throw new Error("PUBLIC_HISTORY_INSUFFICIENT");
+    const dayMs = 86_400_000;
+    const currentUtcDay = Math.floor(this.now() / dayMs) * dayMs;
+    const completedByDay = new Map<number, HistoricalPrice>();
+    for (const price of rawPrices) {
+      const utcDay = Math.floor(price.observedAtMs / dayMs) * dayMs;
+      if (utcDay >= currentUtcDay) continue;
+      completedByDay.set(utcDay, {
+        observedAtMs: utcDay,
+        priceMicros: price.priceMicros,
+      });
+    }
+    const prices = [...completedByDay.values()].sort(
+      (left, right) => left.observedAtMs - right.observedAtMs,
+    );
+    if (prices.length <= 20) throw new Error("PUBLIC_HISTORY_INSUFFICIENT");
     return prices;
   }
 
