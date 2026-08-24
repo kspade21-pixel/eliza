@@ -5,6 +5,43 @@ const IDS = { BTC: "bitcoin", ETH: "ethereum" } as const;
 const MAX_RESPONSE_BYTES = 32_768;
 const CACHE_MS = 15_000;
 
+async function readBoundedBody(response: Response, maximumBytes: number): Promise<string> {
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > maximumBytes) {
+    throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maximumBytes) throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) {
+        await reader.cancel("response limit exceeded");
+        throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
 type SupportedSymbol = keyof typeof IDS;
 type FetchLike = typeof fetch;
 
@@ -46,13 +83,14 @@ export class CoinGeckoKeylessQuoteSource {
       redirect: "error",
     });
     if (!response.ok) throw new Error(`PUBLIC_HISTORY_HTTP_${response.status}`);
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (Number.isFinite(length) && length > 1_048_576) {
-      throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
-    }
-    const body = await response.text();
-    if (new TextEncoder().encode(body).byteLength > 1_048_576) {
-      throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
+    let body: string;
+    try {
+      body = await readBoundedBody(response, 1_048_576);
+    } catch (error) {
+      if (error instanceof Error && error.message === "PUBLIC_RESPONSE_TOO_LARGE") {
+        throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
+      }
+      throw error;
     }
     const parsed = JSON.parse(body) as { prices?: unknown };
     if (!Array.isArray(parsed.prices)) {
@@ -91,6 +129,7 @@ export class CoinGeckoKeylessQuoteSource {
       (left, right) => left.observedAtMs - right.observedAtMs,
     );
     if (prices.length <= 20) throw new Error("PUBLIC_HISTORY_INSUFFICIENT");
+    if (prices.length > days + 1) throw new Error("PUBLIC_HISTORY_TOO_MANY_BARS");
     return prices;
   }
 
@@ -115,13 +154,14 @@ export class CoinGeckoKeylessQuoteSource {
       redirect: "error",
     });
     if (!response.ok) throw new Error(`PUBLIC_QUOTE_HTTP_${response.status}`);
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) {
-      throw new Error("PUBLIC_QUOTE_RESPONSE_TOO_LARGE");
-    }
-    const body = await response.text();
-    if (body.length > MAX_RESPONSE_BYTES) {
-      throw new Error("PUBLIC_QUOTE_RESPONSE_TOO_LARGE");
+    let body: string;
+    try {
+      body = await readBoundedBody(response, MAX_RESPONSE_BYTES);
+    } catch (error) {
+      if (error instanceof Error && error.message === "PUBLIC_RESPONSE_TOO_LARGE") {
+        throw new Error("PUBLIC_QUOTE_RESPONSE_TOO_LARGE");
+      }
+      throw error;
     }
     const parsed = JSON.parse(body) as Record<
       string,
