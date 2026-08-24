@@ -27,7 +27,7 @@ describe("restart-safe paper infrastructure", () => {
 
   it("accepts a verified provider timestamp and caches repeated reads", async () => {
     let now = 1_787_545_600_000;
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(
         JSON.stringify({
           bitcoin: { usd: 50_000.123456, last_updated_at: now / 1_000 },
