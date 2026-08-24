@@ -83,3 +83,24 @@ export interface PaperSnapshot {
   auditLength: number;
   auditHead: string;
 }
+
+export interface PaperEngineState {
+  version: 1;
+  cashMicros: string;
+  realizedPnlMicros: string;
+  halted: boolean;
+  positions: Array<{
+    symbol: string;
+    quantityAtomic: string;
+    costBasisMicros: string;
+    lastMarkPriceMicros: string;
+  }>;
+  audit: AuditReceipt[];
+}
+
+export interface PublicMarketQuote {
+  symbol: "BTC" | "ETH";
+  priceMicros: bigint;
+  observedAtMs: number;
+  source: "coingecko-keyless";
+}
