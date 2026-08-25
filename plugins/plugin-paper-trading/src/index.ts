@@ -8,6 +8,14 @@ export {
 } from "./backtest.js";
 export { formatUsdMicros, paperTradingAction } from "./action.js";
 export { DEFAULT_PAPER_POLICY, PaperTradingEngine } from "./engine.js";
+export {
+  buildPaperDryRunPlan,
+  NoOpExecutionAdapter,
+  validatePaperApprovalIntent,
+  type NoOpExecutionReceipt,
+  type PaperApprovalIntent,
+  type PaperDryRunPlan,
+} from "./launch-readiness.js";
 export { CoinGeckoKeylessQuoteSource } from "./market-data.js";
 export { PaperStateStore } from "./state-store.js";
 export { paperTradingPlugin, paperTradingPlugin as default } from "./plugin.js";
