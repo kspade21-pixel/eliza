@@ -48,6 +48,7 @@ bun run --cwd plugins/plugin-paper-trading build
 The owner-only `PAPER_TRADING` action supports:
 
 - `operation=status` — read the simulated ledger and risk state;
+- `operation=report` — read performance, audit-chain integrity, and explicit risk alerts without mutating the ledger;
 - `operation=quote` — read a bounded public BTC/ETH quote;
 - `operation=backtest` — run historical paper research without changing the ledger;
 - `operation=buy` — deterministic simulated spot buy;
