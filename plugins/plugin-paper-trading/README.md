@@ -102,3 +102,21 @@ data, model, assumptions, or result are correct. Output is labeled
 `UNVERIFIED RESEARCH` and is not a forecast, guarantee, validation, or
 instruction to trade. Backtests never write to the persistent portfolio and
 cannot route orders, wallet actions, transfers, or credentials.
+
+
+## Launch-readiness dry-run framework
+
+The exported launch-readiness API creates an immutable, SHA-256-bound
+`PAPER_DRY_RUN` plan by evaluating a proposed paper order against an isolated
+copy of the existing ledger. It reuses the engine's current risk checks while
+leaving cash, positions, audit receipts, idempotency state, and persistent state
+unchanged.
+
+An optional short-lived approval intent may be bound to the exact plan hash.
+That intent approves review of a simulation plan only. The concrete
+`NoOpExecutionAdapter` always returns `executed: false`; even a valid bound
+intent terminates with `LIVE_EXECUTION_UNAVAILABLE_BY_DESIGN`.
+
+This framework contains no authenticated trading endpoint, signing capability,
+wallet, credential lookup, transfer path, deployment switch, or live execution
+feature flag. Profitability is neither promised nor inferred.
