@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPaperDryRunPlan,
+  DEFAULT_PAPER_POLICY,
   NoOpExecutionAdapter,
   PaperTradingEngine,
   validatePaperApprovalIntent,
@@ -9,6 +10,12 @@ import {
 } from "../src/index.js";
 
 const NOW = 1_787_545_600_000;
+
+function expectDeeplyFrozen(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  expect(Object.isFrozen(value)).toBe(true);
+  for (const nested of Object.values(value)) expectDeeplyFrozen(nested);
+}
 
 function order(overrides: Partial<PaperOrder> = {}): PaperOrder {
   return {
@@ -64,6 +71,15 @@ describe("paper launch readiness", () => {
     expect(engine.snapshot().auditLength).toBe(0);
   });
 
+  it("deep-freezes every approval-bound part of the plan", () => {
+    const plan = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+
+    expectDeeplyFrozen(plan);
+  });
+
   it("uses the existing risk engine and fails closed for stale input", () => {
     const engine = new PaperTradingEngine();
     const plan = buildPaperDryRunPlan(
@@ -104,6 +120,54 @@ describe("paper launch readiness", () => {
       executed: false,
       reason: "LIVE_EXECUTION_UNAVAILABLE_BY_DESIGN",
     });
+  });
+
+  it("rejects a plan whose approval-bound content was tampered with", () => {
+    const plan = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+    const tampered = {
+      ...plan,
+      order: { ...plan.order, quantityAtomic: "1001" },
+    };
+
+    expect(tampered.planHash).toBe(plan.planHash);
+    expect(
+      validatePaperApprovalIntent(tampered, approval(plan.planHash), NOW),
+    ).toBe(false);
+  });
+
+  it("binds the risk policy even when two policies project the same fill", () => {
+    const state = new PaperTradingEngine().exportState();
+    const baseline = buildPaperDryRunPlan(state, order());
+    const alternate = buildPaperDryRunPlan(state, order(), {
+      ...DEFAULT_PAPER_POLICY,
+      maxOrderMicros: DEFAULT_PAPER_POLICY.maxOrderMicros + 1n,
+    });
+
+    expect(alternate.projectedReceipt).toEqual(baseline.projectedReceipt);
+    expect(alternate.planHash).not.toBe(baseline.planHash);
+  });
+
+  it("rejects an already-used idempotency key without mutating persisted state", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const before = engine.exportState();
+
+    const plan = buildPaperDryRunPlan(before, order());
+    const intent = approval(plan.planHash);
+    const adapter = new NoOpExecutionAdapter();
+
+    expect(plan.projectedReceipt.accepted).toBe(false);
+    expect(plan.projectedReceipt.reason).toBe("IDEMPOTENCY_KEY_ALREADY_USED");
+    expect(validatePaperApprovalIntent(plan, intent, NOW)).toBe(false);
+    expect(adapter.evaluate(plan, intent, NOW)).toMatchObject({
+      approvalStatus: "APPROVAL_INVALID",
+      executed: false,
+      reason: "INVALID_APPROVAL_INTENT",
+    });
+    expect(engine.exportState()).toEqual(before);
   });
 
   it("requires approval and rejects mismatched, expired, future, and rejected intents", () => {
@@ -169,5 +233,44 @@ describe("paper launch readiness", () => {
       order({ quantityAtomic: 1_001n }),
     );
     expect(changed.planHash).not.toBe(baseline.planHash);
+  });
+
+  it("fails closed without throwing for a malformed plan", () => {
+    const valid = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+    const malformed = {
+      ...valid,
+      order: null,
+    } as unknown as typeof valid;
+    const intent = approval(valid.planHash);
+    const adapter = new NoOpExecutionAdapter();
+
+    expect(() => validatePaperApprovalIntent(malformed, intent, NOW)).not.toThrow();
+    expect(validatePaperApprovalIntent(malformed, intent, NOW)).toBe(false);
+    expect(() => adapter.evaluate(malformed, intent, NOW)).not.toThrow();
+    expect(adapter.evaluate(malformed, intent, NOW)).toMatchObject({
+      executed: false,
+      reason: "INVALID_APPROVAL_INTENT",
+    });
+  });
+
+  it("remains a permanent no-op after valid approval", () => {
+    const engine = new PaperTradingEngine();
+    const before = engine.exportState();
+    const plan = buildPaperDryRunPlan(before, order());
+    const adapter = new NoOpExecutionAdapter();
+    const intent = approval(plan.planHash);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(adapter.evaluate(plan, intent, NOW)).toMatchObject({
+        approvalStatus: "APPROVAL_BOUND",
+        executed: false,
+        reason: "LIVE_EXECUTION_UNAVAILABLE_BY_DESIGN",
+      });
+    }
+    expect(engine.exportState()).toEqual(before);
+    expect(engine.snapshot().auditLength).toBe(0);
   });
 });
