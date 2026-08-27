@@ -9,6 +9,7 @@ import { BPS_SCALE } from "./types.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_EVALUATION_BARS = 2_000;
+export const MAX_WALK_FORWARD_FOLDS = 128;
 const WALK_FORWARD_ALGORITHM_VERSION = "fixed-sma-walk-forward-oos-v1" as const;
 
 export interface PaperWalkForwardPolicy {
@@ -368,6 +369,10 @@ function validateProtocol(
     developmentValidationBars % protocol.validationBars !== 0
   ) {
     throw new Error("WALK_FORWARD_INVALID_SPLIT");
+  }
+  const foldCount = developmentValidationBars / protocol.validationBars;
+  if (foldCount > MAX_WALK_FORWARD_FOLDS) {
+    throw new Error("WALK_FORWARD_TOO_MANY_FOLDS");
   }
   return developmentEnd;
 }
