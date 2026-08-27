@@ -1,3 +1,9 @@
+/**
+ * Produces deterministic, fail-closed walk-forward and untouched
+ * out-of-sample evaluations for caller-precommitted public historical data.
+ * This stateless module cannot access wallets, services, ledgers, credentials,
+ * networks, or order routing.
+ */
 import { createHash } from "node:crypto";
 import {
   type BacktestContext,
