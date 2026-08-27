@@ -114,6 +114,12 @@ requested window fails closed before evaluation, as does an observation dated
 after its declared retrieval time. Inputs are snapshotted once and limited to
 2,000 strictly chronological positive-price observations.
 
+Evaluation protocols are also limited to `MAX_WALK_FORWARD_FOLDS` (currently
+128). The ceiling is checked before any fold backtest begins; a split requiring
+more folds fails closed with `WALK_FORWARD_TOO_MANY_FOLDS`. Callers that need a
+longer development range must increase `validationBars` or reduce the input
+range, then precommit the revised configuration before evaluation.
+
 Before a run, callers must also calculate and persist the configuration
 commitment with `hashPaperWalkForwardConfiguration`. The run rejects a policy or
 split that does not match `expectedConfigurationSha256`. This evaluator is
