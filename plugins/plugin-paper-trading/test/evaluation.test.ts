@@ -4,6 +4,7 @@ import {
   type HistoricalPrice,
   hashPaperWalkForwardConfiguration,
   hashPublicHistoricalDataset,
+  MAX_WALK_FORWARD_FOLDS,
   PaperTradingEngine,
   runPaperWalkForwardEvaluation,
 } from "../src/index.js";
@@ -157,6 +158,26 @@ describe("paper walk-forward evaluation", () => {
         buyHoldLiquidationReturnBps: "-29",
       },
     ]);
+  });
+
+  it("fails closed before excessive expanding-fold work", () => {
+    const cappedProtocol = {
+      schemaVersion: "paper-walk-forward-protocol/v1",
+      initialTrainingBars: 21,
+      validationBars: 1,
+      outOfSampleBars: 1,
+    } as const;
+    const seed = {
+      protocol: cappedProtocol,
+      policy: DEFAULT_WALK_FORWARD_POLICY,
+      expectedDatasetSha256: "a".repeat(64),
+    } as const;
+
+    expect(MAX_WALK_FORWARD_FOLDS).toBe(128);
+    expect(hashPaperWalkForwardConfiguration(150, seed)).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => hashPaperWalkForwardConfiguration(151, seed)).toThrow(
+      "WALK_FORWARD_TOO_MANY_FOLDS",
+    );
   });
 
   it("keeps fee, spread, slippage, and liquidity assumptions separate", () => {
