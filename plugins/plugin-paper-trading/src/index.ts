@@ -12,6 +12,7 @@ export {
   DEFAULT_WALK_FORWARD_POLICY,
   hashPaperWalkForwardConfiguration,
   hashPublicHistoricalDataset,
+  MAX_WALK_FORWARD_FOLDS,
   type PaperEvaluationFrictionScenario,
   type PaperEvaluationWindow,
   type PaperWalkForwardConfigurationSeed,
