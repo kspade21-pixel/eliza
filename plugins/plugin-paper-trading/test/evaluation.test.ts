@@ -1,3 +1,8 @@
+/**
+ * Exercises the paper-only walk-forward evaluator in a deterministic in-memory
+ * harness, covering commitments, chronological splits, friction scenarios,
+ * fold limits, deep freezing, and persistent-ledger nonmutation.
+ */
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WALK_FORWARD_POLICY,
