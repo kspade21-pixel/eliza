@@ -174,7 +174,9 @@ describe("paper walk-forward evaluation", () => {
     } as const;
 
     expect(MAX_WALK_FORWARD_FOLDS).toBe(128);
-    expect(hashPaperWalkForwardConfiguration(150, seed)).toMatch(/^[a-f0-9]{64}$/);
+    expect(hashPaperWalkForwardConfiguration(150, seed)).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
     expect(() => hashPaperWalkForwardConfiguration(151, seed)).toThrow(
       "WALK_FORWARD_TOO_MANY_FOLDS",
     );
