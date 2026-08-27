@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../tsconfig.build.shared.json",
   "compilerOptions": {
     "allowImportingTsExtensions": false,
     "declaration": true,
@@ -7,7 +7,8 @@
     "emitDeclarationOnly": false,
     "noEmit": false,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["test/**/*.ts"]

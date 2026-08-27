@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   ASSET_SCALE,
-  BPS_SCALE,
   type AuditReceipt,
+  BPS_SCALE,
   type PaperEngineState,
   type PaperLedger,
   type PaperOrder,
@@ -15,14 +15,18 @@ const ZERO_HASH = "0".repeat(64);
 
 function ceilDiv(value: bigint, divisor: bigint): bigint {
   if (value < 0n || divisor <= 0n) {
-    throw new Error("ceilDiv accepts only non-negative values and a positive divisor");
+    throw new Error(
+      "ceilDiv accepts only non-negative values and a positive divisor",
+    );
   }
   return (value + divisor - 1n) / divisor;
 }
 
 function floorDiv(value: bigint, divisor: bigint): bigint {
   if (value < 0n || divisor <= 0n) {
-    throw new Error("floorDiv accepts only non-negative values and a positive divisor");
+    throw new Error(
+      "floorDiv accepts only non-negative values and a positive divisor",
+    );
   }
   return value / divisor;
 }
@@ -81,13 +85,11 @@ export class PaperTradingEngine {
     const executionPrice =
       order.side === "buy"
         ? ceilDiv(
-            order.quote.priceMicros *
-              (BPS_SCALE + this.policy.slippageBps),
+            order.quote.priceMicros * (BPS_SCALE + this.policy.slippageBps),
             BPS_SCALE,
           )
         : floorDiv(
-            order.quote.priceMicros *
-              (BPS_SCALE - this.policy.slippageBps),
+            order.quote.priceMicros * (BPS_SCALE - this.policy.slippageBps),
             BPS_SCALE,
           );
     const notional =
@@ -125,13 +127,31 @@ export class PaperTradingEngine {
       const grossAfter = grossBefore - oldExposure + newSymbolExposure;
 
       if (debit > this.policy.maxOrderMicros) {
-        return this.#record(order, symbol, cashBefore, false, "MAX_ORDER_EXCEEDED");
+        return this.#record(
+          order,
+          symbol,
+          cashBefore,
+          false,
+          "MAX_ORDER_EXCEEDED",
+        );
       }
       if (cashBefore < debit) {
-        return this.#record(order, symbol, cashBefore, false, "INSUFFICIENT_CASH");
+        return this.#record(
+          order,
+          symbol,
+          cashBefore,
+          false,
+          "INSUFFICIENT_CASH",
+        );
       }
       if (cashBefore - debit < this.policy.minCashReserveMicros) {
-        return this.#record(order, symbol, cashBefore, false, "MIN_RESERVE_BREACH");
+        return this.#record(
+          order,
+          symbol,
+          cashBefore,
+          false,
+          "MIN_RESERVE_BREACH",
+        );
       }
       if (newSymbolExposure > this.policy.maxSymbolExposureMicros) {
         return this.#record(
@@ -258,7 +278,12 @@ export class PaperTradingEngine {
     state: PaperEngineState,
     policy: RiskPolicy = DEFAULT_PAPER_POLICY,
   ): PaperTradingEngine {
-    if (!state || state.version !== 1 || !Array.isArray(state.positions) || !Array.isArray(state.audit)) {
+    if (
+      !state ||
+      state.version !== 1 ||
+      !Array.isArray(state.positions) ||
+      !Array.isArray(state.audit)
+    ) {
       throw new Error("INVALID_PAPER_STATE_VERSION");
     }
     const parseUnsigned = (value: string, field: string): bigint => {
@@ -308,7 +333,11 @@ export class PaperTradingEngine {
       engine.ledger.positions.set(symbol, position);
     }
 
-    engine.audit.splice(0, engine.audit.length, ...state.audit.map((receipt) => ({ ...receipt })));
+    engine.audit.splice(
+      0,
+      engine.audit.length,
+      ...state.audit.map((receipt) => ({ ...receipt })),
+    );
     for (const [index, receipt] of engine.audit.entries()) {
       if (
         receipt.sequence !== index + 1 ||
@@ -323,7 +352,10 @@ export class PaperTradingEngine {
       throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
     }
     const finalCash = engine.audit.at(-1)?.cashAfterMicros;
-    if (finalCash !== undefined && finalCash !== engine.ledger.cashMicros.toString()) {
+    if (
+      finalCash !== undefined &&
+      finalCash !== engine.ledger.cashMicros.toString()
+    ) {
       throw new Error("INVALID_PAPER_STATE_CASH_MISMATCH");
     }
     return engine;
@@ -358,7 +390,8 @@ export class PaperTradingEngine {
   #validateOrder(order: PaperOrder, symbol: string): string | undefined {
     if (!order.idempotencyKey.trim()) return "MISSING_IDEMPOTENCY_KEY";
     if (this.ledger.halted) return "DAILY_LOSS_HALT";
-    if (!this.policy.symbolAllowlist.includes(symbol)) return "SYMBOL_NOT_ALLOWED";
+    if (!this.policy.symbolAllowlist.includes(symbol))
+      return "SYMBOL_NOT_ALLOWED";
     if (order.quote.symbol.trim().toUpperCase() !== symbol) {
       return "QUOTE_SYMBOL_MISMATCH";
     }
@@ -418,7 +451,9 @@ export class PaperTradingEngine {
       ...(executionPrice === undefined
         ? {}
         : { executionPriceMicros: executionPrice.toString() }),
-      ...(notional === undefined ? {} : { notionalMicros: notional.toString() }),
+      ...(notional === undefined
+        ? {}
+        : { notionalMicros: notional.toString() }),
       ...(fee === undefined ? {} : { feeMicros: fee.toString() }),
       cashBeforeMicros: cashBefore.toString(),
       cashAfterMicros: this.ledger.cashMicros.toString(),

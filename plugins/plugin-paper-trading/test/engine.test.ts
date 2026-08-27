@@ -206,10 +206,14 @@ describe("PaperTradingEngine", () => {
       .map((name) => fs.readFileSync(path.join(root, "src", name), "utf8"))
       .join("\n");
 
-    expect(packageJson.dependencies).toEqual({ "@elizaos/core": "workspace:*" });
+    expect(packageJson.dependencies).toEqual({
+      "@elizaos/core": "workspace:*",
+    });
     expect(source).not.toMatch(
       /from\s+["'][^"']*(wallet|exchange|ethers|viem|solana|web3)/i,
     );
-    expect(source).not.toMatch(/process\.env|private.?key|seed.?phrase|api.?key/i);
+    expect(source).not.toMatch(
+      /process\.env|private.?key|seed.?phrase|api.?key/i,
+    );
   });
 });

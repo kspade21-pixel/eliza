@@ -1,13 +1,9 @@
-import type {
-  HandlerOptions,
-  IAgentRuntime,
-  Memory,
-} from "@elizaos/core";
+import type { HandlerOptions, IAgentRuntime, Memory } from "@elizaos/core";
 import { describe, expect, it } from "vitest";
 import {
-  paperTradingAction,
-  PaperTradingEngine,
   type HistoricalPrice,
+  PaperTradingEngine,
+  paperTradingAction,
 } from "../src/index.js";
 
 const DAY = 86_400_000;

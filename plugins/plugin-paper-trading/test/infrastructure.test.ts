@@ -27,13 +27,14 @@ describe("restart-safe paper infrastructure", () => {
 
   it("accepts a verified provider timestamp and caches repeated reads", async () => {
     let now = 1_787_545_600_000;
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(
-        JSON.stringify({
-          bitcoin: { usd: 50_000.123456, last_updated_at: now / 1_000 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            bitcoin: { usd: 50_000.123456, last_updated_at: now / 1_000 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
     );
     const fetcher = fetchMock as unknown as typeof fetch;
     const source = new CoinGeckoKeylessQuoteSource(fetcher, () => now);
@@ -57,7 +58,8 @@ describe("restart-safe paper infrastructure", () => {
 
   it("fails closed on malformed or oversized public quote responses", async () => {
     const malformed = new CoinGeckoKeylessQuoteSource(
-      (async () => new Response('{"bitcoin":{"usd":"50000"}}')) as unknown as typeof fetch,
+      (async () =>
+        new Response('{"bitcoin":{"usd":"50000"}}')) as unknown as typeof fetch,
     );
     await expect(malformed.quote("BTC")).rejects.toThrow(
       "PUBLIC_QUOTE_MALFORMED",

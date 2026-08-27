@@ -1,10 +1,7 @@
 import type { Plugin } from "@elizaos/core";
 import { paperTradingAction } from "./action.js";
 import { paperTradingProvider } from "./provider.js";
-import {
-  PaperTradingService,
-  PAPER_TRADING_SERVICE_TYPE,
-} from "./service.js";
+import { PAPER_TRADING_SERVICE_TYPE, PaperTradingService } from "./service.js";
 
 export const paperTradingPlugin: Plugin = {
   name: "@elizaos/plugin-paper-trading",

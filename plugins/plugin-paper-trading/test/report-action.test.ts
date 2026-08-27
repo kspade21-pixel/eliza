@@ -1,6 +1,6 @@
 import type { HandlerOptions, IAgentRuntime, Memory } from "@elizaos/core";
 import { describe, expect, it } from "vitest";
-import { paperTradingAction, PaperTradingEngine } from "../src/index.js";
+import { PaperTradingEngine, paperTradingAction } from "../src/index.js";
 
 describe("paper performance and risk report", () => {
   it("reports a healthy read-only ledger without mutating it", async () => {
