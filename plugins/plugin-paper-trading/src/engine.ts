@@ -51,6 +51,12 @@ const PAPER_AUDIT_REASONS = new Set([
   "INVALID_ORDER_TIMESTAMP",
   "STALE_OR_FUTURE_QUOTE",
 ]);
+const UNREPLAYABLE_PAPER_REJECTION_REASONS = new Set([
+  "QUOTE_SYMBOL_MISMATCH",
+  "MISSING_QUOTE_PROVENANCE",
+  "INVALID_ORDER_TIMESTAMP",
+  "STALE_OR_FUTURE_QUOTE",
+]);
 const PAPER_AUDIT_RECEIPT_KEYS = new Set([
   "sequence",
   "mode",
@@ -502,53 +508,64 @@ export class PaperTradingEngine {
         throw new Error("INVALID_PAPER_STATE_AUDIT");
       }
 
-      if (receipt.accepted) {
-        const {
-          executionPriceMicros,
-          feeMicros,
-          notionalMicros,
-          quantityAtomic,
-          quotePriceMicros,
-        } = receipt;
+      const cannotReplayOriginalRejection =
+        receipt.accepted === false &&
+        UNREPLAYABLE_PAPER_REJECTION_REASONS.has(receipt.reason);
+      if (cannotReplayOriginalRejection) {
+        const requiresPositiveOrderValues =
+          receipt.reason === "INVALID_ORDER_TIMESTAMP" ||
+          receipt.reason === "STALE_OR_FUTURE_QUOTE";
         if (
-          !isPositiveDecimal(executionPriceMicros) ||
-          !isUnsignedDecimal(feeMicros) ||
-          !isPositiveDecimal(notionalMicros) ||
-          !isPositiveDecimal(quantityAtomic) ||
-          !isPositiveDecimal(quotePriceMicros)
+          replayEngine.ledger.halted ||
+          !engine.policy.symbolAllowlist.includes(normalizedSymbol) ||
+          (requiresPositiveOrderValues &&
+            (!isPositiveDecimal(receipt.quantityAtomic) ||
+              !isPositiveDecimal(receipt.quotePriceMicros))) ||
+          receipt.cashAfterMicros !== receipt.cashBeforeMicros ||
+          receipt.cashAfterMicros !==
+            replayEngine.ledger.cashMicros.toString()
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
+      } else {
         const replayed = replayEngine.execute({
           idempotencyKey: receipt.idempotencyKey,
           side: receipt.side,
           symbol: normalizedSymbol,
-          quantityAtomic: BigInt(quantityAtomic),
+          quantityAtomic: BigInt(receipt.quantityAtomic),
           quote: {
             symbol: normalizedSymbol,
-            priceMicros: BigInt(quotePriceMicros),
+            priceMicros: BigInt(receipt.quotePriceMicros),
             observedAtMs: receipt.recordedAtMs,
             source: "restored-audit-replay",
           },
           requestedAtMs: receipt.recordedAtMs,
         });
         if (
-          !replayed.accepted ||
+          replayed.accepted !== receipt.accepted ||
           replayed.reason !== receipt.reason ||
-          replayed.executionPriceMicros !== executionPriceMicros ||
-          replayed.notionalMicros !== notionalMicros ||
-          replayed.feeMicros !== feeMicros ||
           replayed.cashBeforeMicros !== receipt.cashBeforeMicros ||
           replayed.cashAfterMicros !== receipt.cashAfterMicros
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
-      } else if (
-        receipt.cashAfterMicros !== receipt.cashBeforeMicros ||
-        receipt.cashAfterMicros !==
-          replayEngine.ledger.cashMicros.toString()
-      ) {
-        throw new Error("INVALID_PAPER_STATE_AUDIT");
+        if (receipt.accepted) {
+          const {
+            executionPriceMicros,
+            feeMicros,
+            notionalMicros,
+          } = receipt;
+          if (
+            !isPositiveDecimal(executionPriceMicros) ||
+            !isUnsignedDecimal(feeMicros) ||
+            !isPositiveDecimal(notionalMicros) ||
+            replayed.executionPriceMicros !== executionPriceMicros ||
+            replayed.notionalMicros !== notionalMicros ||
+            replayed.feeMicros !== feeMicros
+          ) {
+            throw new Error("INVALID_PAPER_STATE_AUDIT");
+          }
+        }
       }
 
       engine.#receiptsByKey.set(receipt.idempotencyKey, receipt);
