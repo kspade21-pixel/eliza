@@ -12,7 +12,7 @@ import {
   type PaperEngineState,
   PaperTradingEngine,
 } from "../src/index.js";
-import type { PaperOrder } from "../src/types.js";
+import type { AuditReceipt, PaperOrder } from "../src/types.js";
 
 const NOW = 1_787_545_600_000;
 const BTC_PRICE_MICROS = 50_000_000_000n;
@@ -44,6 +44,19 @@ function recommitState(state: PaperEngineState): void {
       }),
     )
     .digest("hex");
+}
+
+function recommitAuditState(state: PaperEngineState): void {
+  let previousHash = "0".repeat(64);
+  for (const receipt of state.audit) {
+    receipt.previousHash = previousHash;
+    const { hash: _hash, ...unsigned } = receipt;
+    receipt.hash = createHash("sha256")
+      .update(JSON.stringify(unsigned))
+      .digest("hex");
+    previousHash = receipt.hash;
+  }
+  recommitState(state);
 }
 
 describe("PaperTradingEngine", () => {
@@ -350,6 +363,315 @@ describe("PaperTradingEngine", () => {
     }
   });
 
+  it("restores representative accepted and rejected receipt shapes", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order({ idempotencyKey: " " }));
+    engine.execute(
+      order({
+        idempotencyKey: "invalid-negative-value",
+        quantityAtomic: -1n,
+      }),
+    );
+    engine.execute(
+      order({
+        idempotencyKey: "invalid-symbol",
+        symbol: "DOGE",
+      }),
+    );
+    engine.execute(
+      order({
+        idempotencyKey: "missing-provenance",
+        quote: {
+          symbol: "BTC",
+          priceMicros: BTC_PRICE_MICROS,
+          observedAtMs: NOW,
+          source: "",
+        },
+      }),
+    );
+    engine.execute(
+      order({
+        idempotencyKey: "over-limit",
+        quantityAtomic: 5_000n,
+      }),
+    );
+    engine.execute(order({ idempotencyKey: "accepted-buy" }));
+    engine.execute(
+      order({
+        idempotencyKey: "accepted-sell",
+        side: "sell",
+      }),
+    );
+    const state = engine.exportState();
+    const restored = PaperTradingEngine.fromState(
+      JSON.parse(JSON.stringify(state)) as PaperEngineState,
+    );
+
+    expect(restored.exportState()).toEqual(state);
+    expect(restored.audit.map(({ reason }) => reason)).toEqual([
+      "MISSING_IDEMPOTENCY_KEY",
+      "INVALID_ORDER_VALUE",
+      "SYMBOL_NOT_ALLOWED",
+      "MISSING_QUOTE_PROVENANCE",
+      "MAX_ORDER_EXCEEDED",
+      "SIMULATED_FILL",
+      "SIMULATED_FILL",
+    ]);
+
+    const haltPolicy = {
+      ...DEFAULT_PAPER_POLICY,
+      maxDailyLossMicros: 1n,
+    };
+    const halted = new PaperTradingEngine(haltPolicy);
+    halted.execute(order({ idempotencyKey: "halt-trigger" }));
+    halted.execute(order({ idempotencyKey: "after-halt" }));
+    const haltedState = halted.exportState();
+    expect(haltedState.halted).toBe(true);
+    expect(haltedState.audit.at(-1)?.reason).toBe("DAILY_LOSS_HALT");
+    expect(
+      PaperTradingEngine.fromState(
+        JSON.parse(JSON.stringify(haltedState)) as PaperEngineState,
+        haltPolicy,
+      ).exportState(),
+    ).toEqual(haltedState);
+  });
+
+  it("rejects rehashed receipts with invalid fields or fill arithmetic", () => {
+    const mutations: Array<(receipt: AuditReceipt) => void> = [
+      (receipt) => {
+        receipt.mode = "LIVE" as "PAPER";
+      },
+      (receipt) => {
+        receipt.accepted = "true" as unknown as boolean;
+      },
+      (receipt) => {
+        receipt.reason = "UNKNOWN_REASON";
+      },
+      (receipt) => {
+        receipt.idempotencyKey = " ";
+      },
+      (receipt) => {
+        receipt.side = "hold" as "buy";
+      },
+      (receipt) => {
+        receipt.symbol = "btc";
+      },
+      (receipt) => {
+        receipt.quantityAtomic = "0";
+      },
+      (receipt) => {
+        receipt.quotePriceMicros = "-1";
+      },
+      (receipt) => {
+        receipt.executionPriceMicros = "1";
+      },
+      (receipt) => {
+        receipt.notionalMicros = "1";
+      },
+      (receipt) => {
+        receipt.feeMicros = "-1";
+      },
+      (receipt) => {
+        receipt.cashBeforeMicros = "19999999";
+      },
+      (receipt) => {
+        receipt.cashAfterMicros = "19999999";
+      },
+      (receipt) => {
+        receipt.accepted = false;
+        receipt.reason = "MAX_ORDER_EXCEEDED";
+      },
+      (receipt) => {
+        delete receipt.feeMicros;
+      },
+      (receipt) => {
+        (receipt as AuditReceipt & { unexpected: string }).unexpected =
+          "malleable";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const engine = new PaperTradingEngine();
+      engine.execute(order());
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      mutate(receipt);
+      recommitAuditState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
+  it("rejects rehashed receipts with inconsistent rejection reasons", () => {
+    const mutations: Array<(receipt: AuditReceipt) => void> = [
+      (receipt) => {
+        receipt.reason = "MAX_ORDER_EXCEEDED";
+      },
+      (receipt) => {
+        receipt.reason = "DAILY_LOSS_HALT";
+      },
+      (receipt) => {
+        receipt.symbol = "DOGE";
+      },
+      (receipt) => {
+        receipt.reason = "INVALID_ORDER_TIMESTAMP";
+        receipt.quantityAtomic = "-1";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const engine = new PaperTradingEngine();
+      engine.execute(
+        order({
+          idempotencyKey: "original-stale-rejection",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
+            source: "verified-test-fixture",
+          },
+        }),
+      );
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      mutate(receipt);
+      recommitAuditState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
+  it("rejects rehashed accepted buys that breach execution risk limits", () => {
+    const forgeAcceptedBuy = (
+      state: PaperEngineState,
+      quantityAtomic: bigint,
+    ): void => {
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      const executionPrice = 50_100_000_000n;
+      const notional =
+        (executionPrice * quantityAtomic + 100_000_000n - 1n) / 100_000_000n;
+      const fee = (notional * 10n + 10_000n - 1n) / 10_000n;
+      const debit = notional + fee;
+      receipt.quantityAtomic = quantityAtomic.toString();
+      receipt.executionPriceMicros = executionPrice.toString();
+      receipt.notionalMicros = notional.toString();
+      receipt.feeMicros = fee.toString();
+      receipt.cashAfterMicros = (20_000_000n - debit).toString();
+      state.cashMicros = receipt.cashAfterMicros;
+      state.positions = [
+        {
+          symbol: "BTC",
+          quantityAtomic: quantityAtomic.toString(),
+          costBasisMicros: debit.toString(),
+          lastMarkPriceMicros: BTC_PRICE_MICROS.toString(),
+        },
+      ];
+      recommitAuditState(state);
+    };
+
+    const orderLimitEngine = new PaperTradingEngine();
+    orderLimitEngine.execute(order());
+    const orderLimitState = orderLimitEngine.exportState();
+    forgeAcceptedBuy(orderLimitState, 5_000n);
+    expect(() => PaperTradingEngine.fromState(orderLimitState)).toThrow(
+      "INVALID_PAPER_STATE_AUDIT",
+    );
+
+    const reservePolicy = {
+      ...DEFAULT_PAPER_POLICY,
+      maxOrderMicros: 15_000_000n,
+      maxSymbolExposureMicros: 20_000_000n,
+      maxGrossExposureMicros: 20_000_000n,
+    };
+    const reserveEngine = new PaperTradingEngine(reservePolicy);
+    reserveEngine.execute(order());
+    const reserveState = reserveEngine.exportState();
+    forgeAcceptedBuy(reserveState, 22_000n);
+    expect(() =>
+      PaperTradingEngine.fromState(reserveState, reservePolicy),
+    ).toThrow("INVALID_PAPER_STATE_AUDIT");
+  });
+
+  it("rejects a rehashed accepted sell without replayed inventory", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const state = engine.exportState();
+    const receipt = state.audit.at(0);
+    if (!receipt) throw new Error("Expected a paper audit receipt");
+    receipt.side = "sell";
+    receipt.executionPriceMicros = "49900000000";
+    receipt.notionalMicros = "998000";
+    receipt.feeMicros = "998";
+    receipt.cashAfterMicros = "20997002";
+    state.cashMicros = receipt.cashAfterMicros;
+    state.realizedPnlMicros = "997002";
+    state.positions = [];
+    recommitAuditState(state);
+
+    expect(() => PaperTradingEngine.fromState(state)).toThrow(
+      "INVALID_PAPER_STATE_AUDIT",
+    );
+  });
+
+  it("rejects rehashed ledgers that disagree with audit replay", () => {
+    const mutations: Array<(state: PaperEngineState) => void> = [
+      (state) => {
+        const position = state.positions.at(0);
+        if (!position) throw new Error("Expected a paper position");
+        position.costBasisMicros = "1";
+      },
+      (state) => {
+        state.realizedPnlMicros = "1";
+      },
+      (state) => {
+        state.halted = true;
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const engine = new PaperTradingEngine();
+      engine.execute(order());
+      const state = engine.exportState();
+      mutate(state);
+      recommitState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
+  it("rejects malformed audit hash fields inside a valid state commitment", () => {
+    const invalidHashFields = ["previousHash", "hash"] as const;
+
+    for (const field of invalidHashFields) {
+      const engine = new PaperTradingEngine();
+      engine.execute(order());
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      receipt[field] = "not-a-sha256";
+      if (field === "previousHash") {
+        const { hash: _hash, ...unsigned } = receipt;
+        receipt.hash = createHash("sha256")
+          .update(JSON.stringify(unsigned))
+          .digest("hex");
+      }
+      recommitState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
   it("rejects restored audit receipts with unsafe timestamps", () => {
     const engine = new PaperTradingEngine();
     engine.execute(order());
@@ -384,7 +706,7 @@ describe("PaperTradingEngine", () => {
     const engine = new PaperTradingEngine();
     engine.execute(order());
     const state = engine.exportState();
-    state.audit[0]!.reason = "ALTERED";
+    state.audit[0]!.hash = "0".repeat(64);
     recommitState(state);
 
     expect(() => PaperTradingEngine.fromState(state)).toThrow(
