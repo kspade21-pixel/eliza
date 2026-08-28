@@ -106,6 +106,36 @@ describe("PaperTradingEngine", () => {
     });
   });
 
+  it("rejects unsafe maximum quote-age policy values", () => {
+    const invalidMaxQuoteAges = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      0,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const maxQuoteAgeMs of invalidMaxQuoteAges) {
+      expect(
+        () =>
+          new PaperTradingEngine({
+            ...DEFAULT_PAPER_POLICY,
+            maxQuoteAgeMs,
+          }),
+      ).toThrow("Invalid fail-closed paper-trading policy");
+    }
+
+    expect(
+      () =>
+        new PaperTradingEngine({
+          ...DEFAULT_PAPER_POLICY,
+          maxQuoteAgeMs: 1,
+        }),
+    ).not.toThrow();
+  });
+
   it("rejects stale and over-limit orders without changing the simulated ledger", () => {
     const engine = new PaperTradingEngine();
     const stale = engine.execute(
