@@ -505,6 +505,49 @@ describe("PaperTradingEngine", () => {
     }
   });
 
+  it("rejects rehashed receipts with inconsistent rejection reasons", () => {
+    const mutations: Array<(receipt: AuditReceipt) => void> = [
+      (receipt) => {
+        receipt.reason = "MAX_ORDER_EXCEEDED";
+      },
+      (receipt) => {
+        receipt.reason = "DAILY_LOSS_HALT";
+      },
+      (receipt) => {
+        receipt.symbol = "DOGE";
+      },
+      (receipt) => {
+        receipt.reason = "INVALID_ORDER_TIMESTAMP";
+        receipt.quantityAtomic = "-1";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const engine = new PaperTradingEngine();
+      engine.execute(
+        order({
+          idempotencyKey: "original-stale-rejection",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs:
+              NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
+            source: "verified-test-fixture",
+          },
+        }),
+      );
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      mutate(receipt);
+      recommitAuditState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
   it("rejects rehashed accepted buys that breach execution risk limits", () => {
     const forgeAcceptedBuy = (
       state: PaperEngineState,
