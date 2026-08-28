@@ -1,7 +1,8 @@
 # This workflow is the sole pull-request and merge-candidate validation authority.
 # It checks mergeability, changed secrets and workflow syntax, then lints,
-# typechecks, builds, and runs explicitly safe deterministic tests for affected
-# workspaces. Provider, device, deployment, and destructive-effect lanes remain excluded.
+# typechecks and builds affected workspaces, and always runs the explicitly safe,
+# deterministic paper-trading suite. Provider, device, deployment, and
+# destructive-effect lanes remain excluded.
 name: PR Static Smoke
 
 on:
@@ -164,18 +165,8 @@ jobs:
           TURBO_SCM_HEAD: ${{ steps.diff.outputs.head_sha }}
         run: node packages/scripts/run-turbo.mjs run typecheck --concurrency=4 --affected
 
-      - name: Run deterministic paper-trading tests when affected
-        shell: bash
-        env:
-          MERGE_BASE: ${{ steps.diff.outputs.merge_base }}
-          HEAD_SHA: ${{ steps.diff.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          if git diff --quiet "$MERGE_BASE"..."$HEAD_SHA" -- 'plugins/plugin-paper-trading/**'; then
-            echo "Paper-trading workspace is unaffected."
-            exit 0
-          fi
-          bun run --cwd plugins/plugin-paper-trading test
+      - name: Run deterministic paper-trading tests
+        run: bun run --cwd plugins/plugin-paper-trading test
 
       - name: Build affected workspace closure
         env:
