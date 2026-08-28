@@ -428,6 +428,7 @@ export class PaperTradingEngine {
       p.feeBps < 0n ||
       p.slippageBps < 0n ||
       p.slippageBps >= BPS_SCALE ||
+      !Number.isSafeInteger(p.maxQuoteAgeMs) ||
       p.maxQuoteAgeMs <= 0 ||
       p.symbolAllowlist.length === 0
     ) {
