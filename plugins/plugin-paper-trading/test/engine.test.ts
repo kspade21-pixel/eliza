@@ -176,7 +176,9 @@ describe("PaperTradingEngine", () => {
         expect(after).toEqual({
           ...before,
           auditLength: before.auditLength + 1,
+          auditHead: receipt.hash,
         });
+        expect(after.auditHead).not.toBe(before.auditHead);
         expect(engine.verifyAuditChain()).toBe(true);
 
         const state = engine.exportState();
@@ -344,6 +346,36 @@ describe("PaperTradingEngine", () => {
       mutate(state);
       expect(() => PaperTradingEngine.fromState(state)).toThrow(
         "INVALID_PAPER_STATE_CHECKSUM",
+      );
+    }
+  });
+
+  it("rejects restored audit receipts with unsafe timestamps", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const invalidTimestamps: unknown[] = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      null,
+    ];
+
+    for (const invalidTimestamp of invalidTimestamps) {
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      receipt.recordedAtMs = invalidTimestamp as number;
+      const { hash: _hash, ...unsigned } = receipt;
+      receipt.hash = createHash("sha256")
+        .update(JSON.stringify(unsigned))
+        .digest("hex");
+      recommitState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
       );
     }
   });
