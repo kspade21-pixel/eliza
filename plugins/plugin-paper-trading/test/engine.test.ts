@@ -12,7 +12,7 @@ import {
   type PaperEngineState,
   PaperTradingEngine,
 } from "../src/index.js";
-import type { PaperOrder } from "../src/types.js";
+import type { AuditReceipt, PaperOrder } from "../src/types.js";
 
 const NOW = 1_787_545_600_000;
 const BTC_PRICE_MICROS = 50_000_000_000n;
@@ -44,6 +44,19 @@ function recommitState(state: PaperEngineState): void {
       }),
     )
     .digest("hex");
+}
+
+function recommitAuditState(state: PaperEngineState): void {
+  let previousHash = "0".repeat(64);
+  for (const receipt of state.audit) {
+    receipt.previousHash = previousHash;
+    const { hash: _hash, ...unsigned } = receipt;
+    receipt.hash = createHash("sha256")
+      .update(JSON.stringify(unsigned))
+      .digest("hex");
+    previousHash = receipt.hash;
+  }
+  recommitState(state);
 }
 
 describe("PaperTradingEngine", () => {
@@ -346,6 +359,120 @@ describe("PaperTradingEngine", () => {
       mutate(state);
       expect(() => PaperTradingEngine.fromState(state)).toThrow(
         "INVALID_PAPER_STATE_CHECKSUM",
+      );
+    }
+  });
+
+  it("restores every engine-generated rejected-receipt shape", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order({ idempotencyKey: " " }));
+    engine.execute(
+      order({
+        idempotencyKey: "invalid-negative-value",
+        quantityAtomic: -1n,
+      }),
+    );
+    const state = engine.exportState();
+    const restored = PaperTradingEngine.fromState(
+      JSON.parse(JSON.stringify(state)) as PaperEngineState,
+    );
+
+    expect(restored.exportState()).toEqual(state);
+    expect(restored.audit.map(({ reason }) => reason)).toEqual([
+      "MISSING_IDEMPOTENCY_KEY",
+      "INVALID_ORDER_VALUE",
+    ]);
+  });
+
+  it("rejects rehashed receipts with invalid fields or fill arithmetic", () => {
+    const mutations: Array<(receipt: AuditReceipt) => void> = [
+      (receipt) => {
+        receipt.mode = "LIVE" as "PAPER";
+      },
+      (receipt) => {
+        receipt.accepted = "true" as unknown as boolean;
+      },
+      (receipt) => {
+        receipt.reason = "UNKNOWN_REASON";
+      },
+      (receipt) => {
+        receipt.idempotencyKey = " ";
+      },
+      (receipt) => {
+        receipt.side = "hold" as "buy";
+      },
+      (receipt) => {
+        receipt.symbol = "btc";
+      },
+      (receipt) => {
+        receipt.quantityAtomic = "0";
+      },
+      (receipt) => {
+        receipt.quotePriceMicros = "-1";
+      },
+      (receipt) => {
+        receipt.executionPriceMicros = "1";
+      },
+      (receipt) => {
+        receipt.notionalMicros = "1";
+      },
+      (receipt) => {
+        receipt.feeMicros = "-1";
+      },
+      (receipt) => {
+        receipt.cashBeforeMicros = "19999999";
+      },
+      (receipt) => {
+        receipt.cashAfterMicros = "19999999";
+      },
+      (receipt) => {
+        receipt.accepted = false;
+        receipt.reason = "MAX_ORDER_EXCEEDED";
+      },
+      (receipt) => {
+        delete receipt.feeMicros;
+      },
+      (receipt) => {
+        (receipt as AuditReceipt & { unexpected: string }).unexpected =
+          "malleable";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const engine = new PaperTradingEngine();
+      engine.execute(order());
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      mutate(receipt);
+      recommitAuditState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
+  it("rejects malformed audit hash fields inside a valid state commitment", () => {
+    const invalidHashFields = ["previousHash", "hash"] as const;
+
+    for (const field of invalidHashFields) {
+      const engine = new PaperTradingEngine();
+      engine.execute(order());
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      receipt[field] = "not-a-sha256";
+      if (field === "previousHash") {
+        const { hash: _hash, ...unsigned } = receipt;
+        receipt.hash = createHash("sha256")
+          .update(JSON.stringify(unsigned))
+          .digest("hex");
+      }
+      recommitState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
       );
     }
   });
