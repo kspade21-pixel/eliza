@@ -141,10 +141,15 @@ describe("paper launch readiness", () => {
   it("binds the risk policy even when two policies project the same fill", () => {
     const state = new PaperTradingEngine().exportState();
     const baseline = buildPaperDryRunPlan(state, order());
-    const alternate = buildPaperDryRunPlan(state, order(), {
+    const alternatePolicy = {
       ...DEFAULT_PAPER_POLICY,
       maxOrderMicros: DEFAULT_PAPER_POLICY.maxOrderMicros + 1n,
-    });
+    };
+    const alternate = buildPaperDryRunPlan(
+      new PaperTradingEngine(alternatePolicy).exportState(),
+      order(),
+      alternatePolicy,
+    );
 
     expect(alternate.projectedReceipt).toEqual(baseline.projectedReceipt);
     expect(alternate.planHash).not.toBe(baseline.planHash);
