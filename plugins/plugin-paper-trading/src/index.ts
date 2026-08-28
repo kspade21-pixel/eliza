@@ -23,6 +23,14 @@ export {
   type PaperWalkForwardProtocol,
   runPaperWalkForwardEvaluation,
 } from "./evaluation.js";
+export {
+  buildPaperDryRunPlan,
+  NoOpExecutionAdapter,
+  type NoOpExecutionReceipt,
+  type PaperApprovalIntent,
+  type PaperDryRunPlan,
+  validatePaperApprovalIntent,
+} from "./launch-readiness.js";
 export { CoinGeckoKeylessQuoteSource } from "./market-data.js";
 export { paperTradingPlugin, paperTradingPlugin as default } from "./plugin.js";
 export { paperTradingProvider } from "./provider.js";
