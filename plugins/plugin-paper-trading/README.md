@@ -17,6 +17,10 @@ Every trading result is labeled `PAPER`. Quotes may be explicitly supplied with 
 unapproved-symbol quotes fail closed. Custom risk policies must set
 `maxQuoteAgeMs` to a positive safe integer in milliseconds; non-finite,
 fractional, zero, and negative values fail during engine construction.
+Direct engine orders likewise require non-negative safe-integer millisecond
+values for both the requested and observed quote timestamps. Invalid timestamps
+fail closed before quote-age arithmetic; rejected attempts use a deterministic
+finite audit timestamp so exported state remains restart-safe.
 
 ## Default $20 policy
 
