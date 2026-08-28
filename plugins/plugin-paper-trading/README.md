@@ -14,7 +14,13 @@ This package is simulation-only. It has:
 - no claim or guarantee of profitability.
 
 Every trading result is labeled `PAPER`. Quotes may be explicitly supplied with provenance or fetched from the fixed read-only public source. Stale, future, mismatched, or
-unapproved-symbol quotes fail closed.
+unapproved-symbol quotes fail closed. Custom risk policies must set
+`maxQuoteAgeMs` to a positive safe integer in milliseconds; non-finite,
+fractional, zero, and negative values fail during engine construction.
+Direct engine orders likewise require non-negative safe-integer millisecond
+values for both the requested and observed quote timestamps. Invalid timestamps
+fail closed before quote-age arithmetic; rejected attempts use a deterministic
+finite audit timestamp so exported state remains restart-safe.
 
 ## Default $20 policy
 
@@ -57,7 +63,9 @@ The owner-only `PAPER_TRADING` action supports:
 Buy and sell require a decimal quantity and idempotency key. They may use a fresh public quote or an explicitly supplied USD quote with source and ISO-8601 observation time. Quotes older than five minutes, future quotes, missing provenance, and symbols outside BTC/ETH are rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
 simulation-only.
 
-The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. Startup restores only versioned, hash-valid state and fails closed on corruption. Live execution remains out of scope.
+The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v2 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Startup rejects checksum or policy mismatches before restoring the ledger. Restored audit timestamps must be non-negative safe-integer milliseconds; legacy or crafted non-finite, fractional, negative, unsafe, or JSON-null timestamps fail closed.
+
+Legacy v1 state is intentionally not auto-migrated because it did not commit every persisted field. Operators must archive the old paper-state file for audit, remove it from the active state path, and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
 
 
 ## Public historical backtesting
@@ -102,3 +110,55 @@ data, model, assumptions, or result are correct. Output is labeled
 `UNVERIFIED RESEARCH` and is not a forecast, guarantee, validation, or
 instruction to trade. Backtests never write to the persistent portfolio and
 cannot route orders, wallet actions, transfers, or credentials.
+
+## Pinned walk-forward and out-of-sample evaluation
+
+The exported `runPaperWalkForwardEvaluation` API adds a strict evaluation
+protocol for fixed strategy configurations. Callers must first calculate and
+persist the exact normalized dataset checksum with
+`hashPublicHistoricalDataset`, then supply that checksum as
+`expectedDatasetSha256`. Any changed price, timestamp, symbol, source, or
+requested window fails closed before evaluation, as does an observation dated
+after its declared retrieval time. Inputs are snapshotted once and limited to
+2,000 strictly chronological positive-price observations.
+
+Evaluation protocols are also limited to `MAX_WALK_FORWARD_FOLDS` (currently
+128). The ceiling is checked before any fold backtest begins; a split requiring
+more folds fails closed with `WALK_FORWARD_TOO_MANY_FOLDS`. Callers that need a
+longer development range must increase `validationBars` or reduce the input
+range, then precommit the revised configuration before evaluation.
+
+Before a run, callers must also calculate and persist the configuration
+commitment with `hashPaperWalkForwardConfiguration`. The run rejects a policy or
+split that does not match `expectedConfigurationSha256`. This evaluator is
+deliberately fixed to the existing 5/20 moving-average algorithm so its nested
+backtest manifests remain exact; friction and portfolio assumptions may be
+pinned, but the signal windows may not be changed through this API.
+
+The protocol reserves the final observations as an untouched out-of-sample
+holdout. Before that holdout is evaluated, the API runs non-overlapping
+validation windows against an expanding training prefix. Each validation and
+holdout window receives only the prior slow-window observations as signal
+warmup, starts with fresh simulated cash, and executes only within its declared
+index range. The API performs no parameter search, fitting, ranking, or
+configuration selection.
+
+This API is stateless: it proves that one run used the supplied precommitted
+configuration and evaluated the holdout after its development folds, but it
+cannot prevent an external caller from creating a different commitment and
+starting a separate study. Consumers must archive the first commitment and
+result and treat every different hash as a distinct evaluation rather than
+retuning against an already-seen holdout.
+
+The configuration records fee, full spread, slippage, and liquidity assumptions
+separately. Slippage and liquidity are added into the existing backtest engine's
+market-impact field because that engine applies those linear basis-point costs
+together. Every fold and the final holdout retain the optimistic, base, and
+stress scenarios plus cash and costed buy-and-hold benchmarks. Dataset,
+configuration, individual backtest input, and complete evaluation checksums are
+returned, and the complete result is deeply frozen.
+
+These checksums establish reproducibility only. They do not authenticate a data
+publisher or prove that public observations, assumptions, or modeled results
+are correct. The API is paper research only and has no service, ledger, wallet,
+credential, transfer, or order-routing access.

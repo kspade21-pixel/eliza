@@ -1,15 +1,10 @@
-name: Paper Trading PR
+name: Paper Trading Verification
 
 on:
-  pull_request:
-    branches: [develop]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "plugins/plugin-paper-trading/**"
-      - ".github/workflows/paper-trading-pr9.yml"
+  workflow_dispatch:
 
 concurrency:
-  group: paper-trading-pr-${{ github.event.pull_request.number }}
+  group: paper-trading-verification-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

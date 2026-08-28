@@ -1,11 +1,6 @@
 import { homedir } from "node:os";
 import path from "node:path";
-import {
-  ElizaError,
-  type IAgentRuntime,
-  logger,
-  Service,
-} from "@elizaos/core";
+import { ElizaError, type IAgentRuntime, logger, Service } from "@elizaos/core";
 import { PaperTradingEngine } from "./engine.js";
 import { CoinGeckoKeylessQuoteSource } from "./market-data.js";
 import { PaperStateStore } from "./state-store.js";

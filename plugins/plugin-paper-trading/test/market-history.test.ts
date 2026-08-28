@@ -36,9 +36,9 @@ describe("public historical market data", () => {
     await expect(source.history("BTC", 30)).rejects.toThrow(
       "PUBLIC_HISTORY_MALFORMED",
     );
-    await expect(
-      source.history("BTC", 7 as 30),
-    ).rejects.toThrow("PUBLIC_HISTORY_DAYS_NOT_SUPPORTED");
+    await expect(source.history("BTC", 7 as 30)).rejects.toThrow(
+      "PUBLIC_HISTORY_DAYS_NOT_SUPPORTED",
+    );
   });
 
   it("rejects oversized history before parsing", async () => {

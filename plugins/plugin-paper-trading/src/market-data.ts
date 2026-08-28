@@ -1,18 +1,22 @@
 import type { HistoricalPrice } from "./backtest.js";
-import { USD_SCALE, type PublicMarketQuote } from "./types.js";
+import { type PublicMarketQuote, USD_SCALE } from "./types.js";
 
 const IDS = { BTC: "bitcoin", ETH: "ethereum" } as const;
 const MAX_RESPONSE_BYTES = 32_768;
 const CACHE_MS = 15_000;
 
-async function readBoundedBody(response: Response, maximumBytes: number): Promise<string> {
+async function readBoundedBody(
+  response: Response,
+  maximumBytes: number,
+): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (Number.isFinite(declared) && declared > maximumBytes) {
     throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
   }
   if (!response.body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > maximumBytes) throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
+    if (bytes.byteLength > maximumBytes)
+      throw new Error("PUBLIC_RESPONSE_TOO_LARGE");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
 
@@ -87,7 +91,10 @@ export class CoinGeckoKeylessQuoteSource {
     try {
       body = await readBoundedBody(response, 1_048_576);
     } catch (error) {
-      if (error instanceof Error && error.message === "PUBLIC_RESPONSE_TOO_LARGE") {
+      if (
+        error instanceof Error &&
+        error.message === "PUBLIC_RESPONSE_TOO_LARGE"
+      ) {
         throw new Error("PUBLIC_HISTORY_RESPONSE_TOO_LARGE");
       }
       throw error;
@@ -129,7 +136,8 @@ export class CoinGeckoKeylessQuoteSource {
       (left, right) => left.observedAtMs - right.observedAtMs,
     );
     if (prices.length <= 20) throw new Error("PUBLIC_HISTORY_INSUFFICIENT");
-    if (prices.length > days + 1) throw new Error("PUBLIC_HISTORY_TOO_MANY_BARS");
+    if (prices.length > days + 1)
+      throw new Error("PUBLIC_HISTORY_TOO_MANY_BARS");
     return prices;
   }
 
@@ -158,7 +166,10 @@ export class CoinGeckoKeylessQuoteSource {
     try {
       body = await readBoundedBody(response, MAX_RESPONSE_BYTES);
     } catch (error) {
-      if (error instanceof Error && error.message === "PUBLIC_RESPONSE_TOO_LARGE") {
+      if (
+        error instanceof Error &&
+        error.message === "PUBLIC_RESPONSE_TOO_LARGE"
+      ) {
         throw new Error("PUBLIC_QUOTE_RESPONSE_TOO_LARGE");
       }
       throw error;

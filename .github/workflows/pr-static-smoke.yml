@@ -1,7 +1,8 @@
 # This workflow is the sole pull-request and merge-candidate validation authority.
-# It checks mergeability, changed secrets and workflow syntax, then builds and
-# statically validates the affected workspace closure without running test,
-# provider, device, deployment, or destructive-effect lanes.
+# It checks mergeability, changed secrets and workflow syntax, then lints,
+# typechecks and builds affected workspaces, and always runs the explicitly safe,
+# deterministic paper-trading suite. Provider, device, deployment, and
+# destructive-effect lanes remain excluded.
 name: PR Static Smoke
 
 on:
@@ -49,11 +50,25 @@ jobs:
           set -euo pipefail
           merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
           test -n "$merge_base"
-          git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA" >/dev/null
+          candidate_tree="$(git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA")"
+          test "$(git cat-file -t "$candidate_tree")" = "tree"
+          candidate_date="$(git show -s --format=%cI "$HEAD_SHA")"
+          candidate_sha="$(
+            GIT_AUTHOR_NAME="PR Static Smoke" \
+            GIT_AUTHOR_EMAIL="ci@localhost" \
+            GIT_AUTHOR_DATE="$candidate_date" \
+            GIT_COMMITTER_NAME="PR Static Smoke" \
+            GIT_COMMITTER_EMAIL="ci@localhost" \
+            GIT_COMMITTER_DATE="$candidate_date" \
+              git commit-tree "$candidate_tree" \
+                -p "$BASE_SHA" \
+                -p "$HEAD_SHA" \
+                -m "PR Static Smoke synthetic merge candidate"
+          )"
           git diff --check "$merge_base"..."$HEAD_SHA"
 
           status=0
-          git grep -n -E '^(<{7}|>{7})( |$)' "$HEAD_SHA" -- . || status=$?
+          git grep -n -E '^(<{7}|>{7})( |$)' "$candidate_sha" -- . || status=$?
           if [ "$status" -eq 0 ]; then
             echo "::error::Candidate source contains unresolved merge-conflict markers."
             exit 1
@@ -63,8 +78,12 @@ jobs:
             exit 1
           fi
 
+          git checkout --detach "$candidate_sha"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$candidate_tree"
+
           echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned gitleaks
         shell: bash
@@ -137,14 +156,20 @@ jobs:
       - name: Lint affected workspace closure
         env:
           TURBO_SCM_BASE: ${{ steps.diff.outputs.merge_base }}
+          TURBO_SCM_HEAD: ${{ steps.diff.outputs.head_sha }}
         run: node packages/scripts/run-turbo.mjs run lint:check --concurrency=4 --affected
 
       - name: Typecheck affected workspace closure
         env:
           TURBO_SCM_BASE: ${{ steps.diff.outputs.merge_base }}
+          TURBO_SCM_HEAD: ${{ steps.diff.outputs.head_sha }}
         run: node packages/scripts/run-turbo.mjs run typecheck --concurrency=4 --affected
+
+      - name: Run deterministic paper-trading tests
+        run: bun run --cwd plugins/plugin-paper-trading test
 
       - name: Build affected workspace closure
         env:
           TURBO_SCM_BASE: ${{ steps.diff.outputs.merge_base }}
+          TURBO_SCM_HEAD: ${{ steps.diff.outputs.head_sha }}
         run: node packages/scripts/run-turbo.mjs run build --concurrency=4 --affected --output-logs=errors-only

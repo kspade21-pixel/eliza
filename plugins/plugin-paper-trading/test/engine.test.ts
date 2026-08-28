@@ -1,9 +1,15 @@
+/**
+ * Verifies deterministic paper fills, risk enforcement, state commitments,
+ * restart integrity, audit chaining, idempotency, and live-path exclusion.
+ */
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PAPER_POLICY,
   formatUsdMicros,
+  type PaperEngineState,
   PaperTradingEngine,
 } from "../src/index.js";
 import type { PaperOrder } from "../src/types.js";
@@ -26,6 +32,18 @@ function order(overrides: Partial<PaperOrder> = {}): PaperOrder {
     requestedAtMs: NOW,
     ...overrides,
   };
+}
+
+function recommitState(state: PaperEngineState): void {
+  const { stateSha256: _stateSha256, ...committedState } = state;
+  state.stateSha256 = createHash("sha256")
+    .update(
+      JSON.stringify({
+        schemaVersion: "paper-engine-state-commitment/v1",
+        state: committedState,
+      }),
+    )
+    .digest("hex");
 }
 
 describe("PaperTradingEngine", () => {
@@ -86,6 +104,116 @@ describe("PaperTradingEngine", () => {
       accepted: true,
       reason: "SIMULATED_FILL",
     });
+  });
+
+  it("rejects unsafe maximum quote-age policy values", () => {
+    const invalidMaxQuoteAges = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      0,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const maxQuoteAgeMs of invalidMaxQuoteAges) {
+      expect(
+        () =>
+          new PaperTradingEngine({
+            ...DEFAULT_PAPER_POLICY,
+            maxQuoteAgeMs,
+          }),
+      ).toThrow("Invalid fail-closed paper-trading policy");
+    }
+
+    expect(
+      () =>
+        new PaperTradingEngine({
+          ...DEFAULT_PAPER_POLICY,
+          maxQuoteAgeMs: 1,
+        }),
+    ).not.toThrow();
+  });
+
+  it("rejects unsafe order timestamps without mutating durable paper state", () => {
+    const invalidTimestamps = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+    const timestampFields = ["requestedAtMs", "observedAtMs"] as const;
+
+    for (const [index, invalidTimestamp] of invalidTimestamps.entries()) {
+      for (const field of timestampFields) {
+        const engine = new PaperTradingEngine();
+        const baseOrder = order({
+          idempotencyKey: `invalid-${field}-${index}`,
+        });
+        const request: PaperOrder =
+          field === "requestedAtMs"
+            ? { ...baseOrder, requestedAtMs: invalidTimestamp }
+            : {
+                ...baseOrder,
+                quote: {
+                  ...baseOrder.quote,
+                  observedAtMs: invalidTimestamp,
+                },
+              };
+        const before = engine.snapshot();
+        const receipt = engine.execute(request);
+        const after = engine.snapshot();
+
+        expect(receipt).toMatchObject({
+          accepted: false,
+          reason: "INVALID_ORDER_TIMESTAMP",
+        });
+        expect(Number.isSafeInteger(receipt.recordedAtMs)).toBe(true);
+        expect(receipt.recordedAtMs).toBeGreaterThanOrEqual(0);
+        expect(after).toEqual({
+          ...before,
+          auditLength: before.auditLength + 1,
+          auditHead: receipt.hash,
+        });
+        expect(after.auditHead).not.toBe(before.auditHead);
+        expect(engine.verifyAuditChain()).toBe(true);
+
+        const state = engine.exportState();
+        const serialized = JSON.stringify(state);
+        expect(serialized).not.toContain("null");
+        expect(
+          PaperTradingEngine.fromState(
+            JSON.parse(serialized) as PaperEngineState,
+          ).exportState(),
+        ).toEqual(state);
+      }
+    }
+
+    const epochEngine = new PaperTradingEngine();
+    const epochOrder = order({
+      idempotencyKey: "epoch-zero",
+      requestedAtMs: 0,
+      quote: {
+        symbol: "BTC",
+        priceMicros: BTC_PRICE_MICROS,
+        observedAtMs: 0,
+        source: "verified-test-fixture",
+      },
+    });
+    expect(epochEngine.execute(epochOrder)).toMatchObject({
+      accepted: true,
+      reason: "SIMULATED_FILL",
+      recordedAtMs: 0,
+    });
+    const epochState = epochEngine.exportState();
+    expect(
+      PaperTradingEngine.fromState(
+        JSON.parse(JSON.stringify(epochState)) as PaperEngineState,
+      ).exportState(),
+    ).toEqual(epochState);
   });
 
   it("rejects stale and over-limit orders without changing the simulated ledger", () => {
@@ -160,31 +288,133 @@ describe("PaperTradingEngine", () => {
     });
   });
 
-  it("restores balances, positions, audit receipts, and idempotency", () => {
+  it("restores committed balances, positions, audit receipts, and idempotency", () => {
     const first = new PaperTradingEngine();
     const request = order();
     const receipt = first.execute(request);
-    const restored = PaperTradingEngine.fromState(first.exportState());
+    const state = first.exportState();
+    const restored = PaperTradingEngine.fromState(state);
 
+    expect(state).toMatchObject({ version: 2 });
+    expect(state.policySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(state.stateSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(restored.exportState()).toEqual(state);
     expect(restored.snapshot()).toEqual(first.snapshot());
     expect(restored.execute(request)).toEqual(receipt);
     expect(restored.audit).toHaveLength(1);
     expect(restored.verifyAuditChain()).toBe(true);
   });
 
-  it("fails closed when durable state or its audit chain is altered", () => {
+  it("fails closed when any committed durable-state field is altered", () => {
     const engine = new PaperTradingEngine();
     engine.execute(order());
-    const cashTamper = engine.exportState();
-    cashTamper.cashMicros = "20000000";
-    expect(() => PaperTradingEngine.fromState(cashTamper)).toThrow(
-      "INVALID_PAPER_STATE_CASH_MISMATCH",
+    const mutations: Array<(state: PaperEngineState) => void> = [
+      (state) => {
+        state.cashMicros = "20000000";
+      },
+      (state) => {
+        state.realizedPnlMicros = "1";
+      },
+      (state) => {
+        state.halted = true;
+      },
+      (state) => {
+        state.positions[0]!.symbol = "ETH";
+      },
+      (state) => {
+        state.positions[0]!.quantityAtomic = "1";
+      },
+      (state) => {
+        state.positions[0]!.costBasisMicros = "1";
+      },
+      (state) => {
+        state.positions[0]!.lastMarkPriceMicros = "1";
+      },
+      (state) => {
+        state.audit[0]!.reason = "ALTERED";
+      },
+      (state) => {
+        state.policySha256 = "0".repeat(64);
+      },
+      (state) => {
+        state.stateSha256 = "0".repeat(64);
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const state = engine.exportState();
+      mutate(state);
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_CHECKSUM",
+      );
+    }
+  });
+
+  it("rejects restored audit receipts with unsafe timestamps", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const invalidTimestamps: unknown[] = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      null,
+    ];
+
+    for (const invalidTimestamp of invalidTimestamps) {
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper audit receipt");
+      receipt.recordedAtMs = invalidTimestamp as number;
+      const { hash: _hash, ...unsigned } = receipt;
+      receipt.hash = createHash("sha256")
+        .update(JSON.stringify(unsigned))
+        .digest("hex");
+      recommitState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
+  it("still verifies the audit chain inside a valid state commitment", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order());
+    const state = engine.exportState();
+    state.audit[0]!.reason = "ALTERED";
+    recommitState(state);
+
+    expect(() => PaperTradingEngine.fromState(state)).toThrow(
+      "INVALID_PAPER_STATE_AUDIT_HASH",
+    );
+  });
+
+  it("binds restart state to the risk policy and rejects legacy v1 state", () => {
+    const engine = new PaperTradingEngine();
+    const state = engine.exportState();
+
+    expect(() =>
+      PaperTradingEngine.fromState(state, {
+        ...DEFAULT_PAPER_POLICY,
+        maxOrderMicros: DEFAULT_PAPER_POLICY.maxOrderMicros - 1n,
+      }),
+    ).toThrow("INVALID_PAPER_STATE_POLICY_MISMATCH");
+
+    const invalidHalt = {
+      ...state,
+      halted: "true",
+    } as unknown as PaperEngineState;
+    recommitState(invalidHalt);
+    expect(() => PaperTradingEngine.fromState(invalidHalt)).toThrow(
+      "INVALID_PAPER_STATE_HALTED",
     );
 
-    const auditTamper = engine.exportState();
-    auditTamper.audit[0]!.reason = "ALTERED";
-    expect(() => PaperTradingEngine.fromState(auditTamper)).toThrow(
-      "INVALID_PAPER_STATE_AUDIT_HASH",
+    const legacy = { ...state, version: 1 } as unknown as PaperEngineState;
+    expect(() => PaperTradingEngine.fromState(legacy)).toThrow(
+      "INVALID_PAPER_STATE_VERSION",
     );
   });
 
@@ -206,10 +436,14 @@ describe("PaperTradingEngine", () => {
       .map((name) => fs.readFileSync(path.join(root, "src", name), "utf8"))
       .join("\n");
 
-    expect(packageJson.dependencies).toEqual({ "@elizaos/core": "workspace:*" });
+    expect(packageJson.dependencies).toEqual({
+      "@elizaos/core": "workspace:*",
+    });
     expect(source).not.toMatch(
       /from\s+["'][^"']*(wallet|exchange|ethers|viem|solana|web3)/i,
     );
-    expect(source).not.toMatch(/process\.env|private.?key|seed.?phrase|api.?key/i);
+    expect(source).not.toMatch(
+      /process\.env|private.?key|seed.?phrase|api.?key/i,
+    );
   });
 });

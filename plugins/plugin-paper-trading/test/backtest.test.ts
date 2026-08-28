@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BACKTEST_POLICY,
-  runPaperBacktest,
   type HistoricalPrice,
+  runPaperBacktest,
 } from "../src/index.js";
 
 const DAY = 86_400_000;
@@ -73,15 +73,20 @@ describe("paper backtesting", () => {
       feeBps: 11n,
     });
     expect(baseline.runManifest.inputSha256).toHaveLength(64);
-    expect(changed.runManifest.inputSha256).not.toBe(baseline.runManifest.inputSha256);
-    expect(baseline.algorithmVersion).toBe("sma-5-20-next-observation-cost-model-v3");
+    expect(changed.runManifest.inputSha256).not.toBe(
+      baseline.runManifest.inputSha256,
+    );
+    expect(baseline.algorithmVersion).toBe(
+      "sma-5-20-next-observation-cost-model-v3",
+    );
   });
 
   it("does not invent trades on a flat market", () => {
     const result = runPaperBacktest(series(Array(30).fill(100)));
     expect(result).toMatchObject({
       trades: 0,
-      liquidationValueEquityMicros: DEFAULT_BACKTEST_POLICY.initialCashMicros.toString(),
+      liquidationValueEquityMicros:
+        DEFAULT_BACKTEST_POLICY.initialCashMicros.toString(),
       liquidationReturnBps: "0",
       finalSignal: "WAIT",
     });
@@ -111,22 +116,46 @@ describe("paper backtesting", () => {
       series(Array.from({ length: 30 }, (_, index) => 100 + index)),
     );
     expect(result.trades).toBe(1);
-    expect(BigInt(result.liquidationValueEquityMicros)).toBeGreaterThan(10_000_000n);
+    expect(BigInt(result.liquidationValueEquityMicros)).toBeGreaterThan(
+      10_000_000n,
+    );
   });
 
   it("reports benchmarks, friction scenarios, terminal values, warnings, and gaps", () => {
-    const values = series(Array.from({ length: 60 }, (_, index) => 100 + index));
-    values[40] = { ...values[40]!, observedAtMs: values[40]!.observedAtMs + DAY };
+    const values = series(
+      Array.from({ length: 60 }, (_, index) => 100 + index),
+    );
+    values[40] = {
+      ...values[40]!,
+      observedAtMs: values[40]!.observedAtMs + DAY,
+    };
     for (let index = 41; index < values.length; index++) {
-      values[index] = { ...values[index]!, observedAtMs: values[index]!.observedAtMs + DAY };
+      values[index] = {
+        ...values[index]!,
+        observedAtMs: values[index]!.observedAtMs + DAY,
+      };
     }
     const result = runPaperBacktest(values, undefined, {
-      symbol: "BTC", source: "fixture", windowDays: 60, retrievedAtMs: START + 70 * DAY,
+      symbol: "BTC",
+      source: "fixture",
+      windowDays: 60,
+      retrievedAtMs: START + 70 * DAY,
     });
-    expect(result.scenarios.map((item) => item.name)).toEqual(["optimistic", "base", "stress"]);
-    expect(result.scenarios.every((item) => item.cashBenchmarkReturnBps === "0")).toBe(true);
-    expect(BigInt(result.markToMarketEquityMicros)).toBeGreaterThanOrEqual(BigInt(result.liquidationValueEquityMicros));
-    expect(result.coverage).toMatchObject({ gapCount: 1, missingDailyIntervals: 1 });
+    expect(result.scenarios.map((item) => item.name)).toEqual([
+      "optimistic",
+      "base",
+      "stress",
+    ]);
+    expect(
+      result.scenarios.every((item) => item.cashBenchmarkReturnBps === "0"),
+    ).toBe(true);
+    expect(BigInt(result.markToMarketEquityMicros)).toBeGreaterThanOrEqual(
+      BigInt(result.liquidationValueEquityMicros),
+    );
+    expect(result.coverage).toMatchObject({
+      gapCount: 1,
+      missingDailyIntervals: 1,
+    });
     expect(result.runManifest).toMatchObject({
       schemaVersion: "paper-backtest-run-manifest/v2",
       priceFieldSemantics: "observation-price; not asserted to be market open",
@@ -138,37 +167,59 @@ describe("paper backtesting", () => {
   it("keeps content hash stable across retrieval times", () => {
     const prices = series(Array(30).fill(100));
     const first = runPaperBacktest(prices, undefined, {
-      symbol: "BTC", source: "fixture", windowDays: 30, retrievedAtMs: START + 31 * DAY,
+      symbol: "BTC",
+      source: "fixture",
+      windowDays: 30,
+      retrievedAtMs: START + 31 * DAY,
     });
     const second = runPaperBacktest(prices, undefined, {
-      symbol: "BTC", source: "fixture", windowDays: 30, retrievedAtMs: START + 32 * DAY,
+      symbol: "BTC",
+      source: "fixture",
+      windowDays: 30,
+      retrievedAtMs: START + 32 * DAY,
     });
-    expect(first.runManifest.retrievedAtMs).not.toBe(second.runManifest.retrievedAtMs);
+    expect(first.runManifest.retrievedAtMs).not.toBe(
+      second.runManifest.retrievedAtMs,
+    );
     expect(first.runManifest.inputSha256).toBe(second.runManifest.inputSha256);
   });
 
   it("uses requested costs for base and keeps illustrative sensitivity ordered", () => {
-    const prices = series(Array.from({ length: 60 }, (_, index) => 100 + index));
+    const prices = series(
+      Array.from({ length: 60 }, (_, index) => 100 + index),
+    );
     const low = runPaperBacktest(prices, {
-      ...DEFAULT_BACKTEST_POLICY, feeBps: 2n, spreadBps: 4n, marketImpactBps: 3n,
+      ...DEFAULT_BACKTEST_POLICY,
+      feeBps: 2n,
+      spreadBps: 4n,
+      marketImpactBps: 3n,
     });
     const high = runPaperBacktest(prices, {
-      ...DEFAULT_BACKTEST_POLICY, feeBps: 20n, spreadBps: 30n, marketImpactBps: 40n,
+      ...DEFAULT_BACKTEST_POLICY,
+      feeBps: 20n,
+      spreadBps: 30n,
+      marketImpactBps: 40n,
     });
     expect(low.scenarios[1]).toMatchObject({
-      feeBps: "2", spreadBps: "4", marketImpactBps: "3",
+      feeBps: "2",
+      spreadBps: "4",
+      marketImpactBps: "3",
       costProvenance: "illustrative-policy-input",
       liquidationValueEquityMicros: "20646290",
       liquidationReturnBps: "323",
     });
     expect(low.runManifest.costModel[1]).toMatchObject({
-      feeBps: "2", spreadBps: "4", marketImpactBps: "3",
+      feeBps: "2",
+      spreadBps: "4",
+      marketImpactBps: "3",
       provenance: "illustrative-policy-input",
     });
     expect(low.scenarios[1]!.liquidationValueEquityMicros).not.toBe(
       high.scenarios[1]!.liquidationValueEquityMicros,
     );
-    const returns = low.scenarios.map((item) => BigInt(item.liquidationReturnBps));
+    const returns = low.scenarios.map((item) =>
+      BigInt(item.liquidationReturnBps),
+    );
     expect(returns[0]).toBeGreaterThanOrEqual(returns[1]!);
     expect(returns[1]).toBeGreaterThanOrEqual(returns[2]!);
   });
@@ -176,7 +227,10 @@ describe("paper backtesting", () => {
   it("uses the next observation for a positive fill and has fixed-point golden math", () => {
     const prices = series([...Array(20).fill(100), 200, 300]);
     const result = runPaperBacktest(prices, {
-      ...DEFAULT_BACKTEST_POLICY, feeBps: 0n, spreadBps: 0n, marketImpactBps: 0n,
+      ...DEFAULT_BACKTEST_POLICY,
+      feeBps: 0n,
+      spreadBps: 0n,
+      marketImpactBps: 0n,
     });
     const base = result.scenarios[1]!;
     // The signal from observation 20 executes at observation 21 (300), not 200.
@@ -189,11 +243,13 @@ describe("paper backtesting", () => {
   });
 
   it("reports same-convention benchmark drawdown and blocks ranking", () => {
-    const result = runPaperBacktest(series([
-      ...Array(20).fill(100), 120, 80, 60, 100, 110,
-    ]));
+    const result = runPaperBacktest(
+      series([...Array(20).fill(100), 120, 80, 60, 100, 110]),
+    );
     const base = result.scenarios[1]!;
-    expect(BigInt(base.buyHoldLiquidationAdjustedMaxDrawdownBps)).toBeGreaterThanOrEqual(0n);
+    expect(
+      BigInt(base.buyHoldLiquidationAdjustedMaxDrawdownBps),
+    ).toBeGreaterThanOrEqual(0n);
     expect(base.profitabilityRanking).toBeNull();
     expect(base.comparisonStatus).toBe("NOT_RANKED_NO_OBSERVED_VENUE_BASIS");
     expect(result.runManifest).toMatchObject({
@@ -204,15 +260,21 @@ describe("paper backtesting", () => {
   });
 
   it("rejects base costs whose derived stress case reaches invalid bounds", () => {
-    const prices = series(Array.from({ length: 30 }, (_, index) => 100 + index));
-    expect(() => runPaperBacktest(prices, {
-      ...DEFAULT_BACKTEST_POLICY,
-      feeBps: 4_000n,
-    })).toThrow("BACKTEST_INVALID_POLICY");
-    expect(() => runPaperBacktest(prices, {
-      ...DEFAULT_BACKTEST_POLICY,
-      marketImpactBps: 4_000n,
-    })).toThrow("BACKTEST_INVALID_POLICY");
+    const prices = series(
+      Array.from({ length: 30 }, (_, index) => 100 + index),
+    );
+    expect(() =>
+      runPaperBacktest(prices, {
+        ...DEFAULT_BACKTEST_POLICY,
+        feeBps: 4_000n,
+      }),
+    ).toThrow("BACKTEST_INVALID_POLICY");
+    expect(() =>
+      runPaperBacktest(prices, {
+        ...DEFAULT_BACKTEST_POLICY,
+        marketImpactBps: 4_000n,
+      }),
+    ).toThrow("BACKTEST_INVALID_POLICY");
   });
 
   it("keeps stress liquidation proceeds and equity non-negative at the boundary", () => {
@@ -227,9 +289,14 @@ describe("paper backtesting", () => {
     );
     const stress = result.scenarios[2]!;
     expect(BigInt(stress.feeBps)).toBeLessThan(10_000n);
-    expect((BigInt(stress.spreadBps) + 1n) / 2n + BigInt(stress.marketImpactBps))
-      .toBeLessThan(10_000n);
-    expect(BigInt(stress.liquidationValueEquityMicros)).toBeGreaterThanOrEqual(0n);
-    expect(BigInt(stress.buyHoldLiquidationValueEquityMicros)).toBeGreaterThanOrEqual(0n);
+    expect(
+      (BigInt(stress.spreadBps) + 1n) / 2n + BigInt(stress.marketImpactBps),
+    ).toBeLessThan(10_000n);
+    expect(BigInt(stress.liquidationValueEquityMicros)).toBeGreaterThanOrEqual(
+      0n,
+    );
+    expect(
+      BigInt(stress.buyHoldLiquidationValueEquityMicros),
+    ).toBeGreaterThanOrEqual(0n);
   });
 });

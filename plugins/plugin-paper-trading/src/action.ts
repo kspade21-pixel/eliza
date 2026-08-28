@@ -1,17 +1,24 @@
-import {
-  type Action,
-  type ActionResult,
-  type HandlerCallback,
-  type HandlerOptions,
-  type IAgentRuntime,
-  type Memory,
-  type State,
+import type {
+  Action,
+  ActionResult,
+  HandlerCallback,
+  HandlerOptions,
+  IAgentRuntime,
+  Memory,
+  State,
 } from "@elizaos/core";
 import { runPaperBacktest } from "./backtest.js";
-import { ASSET_SCALE, USD_SCALE } from "./types.js";
 import { getPaperTradingService } from "./service.js";
+import { ASSET_SCALE, USD_SCALE } from "./types.js";
 
-const OPERATIONS = ["status", "report", "quote", "backtest", "buy", "sell"] as const;
+const OPERATIONS = [
+  "status",
+  "report",
+  "quote",
+  "backtest",
+  "buy",
+  "sell",
+] as const;
 type Operation = (typeof OPERATIONS)[number];
 
 function params(options?: HandlerOptions): Record<string, unknown> {
@@ -27,12 +34,19 @@ function text(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function decimalToFixed(value: unknown, scale: bigint, decimals: number): bigint {
+function decimalToFixed(
+  value: unknown,
+  scale: bigint,
+  decimals: number,
+): bigint {
   const raw =
     typeof value === "number" && Number.isFinite(value)
       ? String(value)
       : text(value);
-  if (!raw || !new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${decimals}})?$`).test(raw)) {
+  if (
+    !raw ||
+    !new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${decimals}})?$`).test(raw)
+  ) {
     throw new Error("INVALID_POSITIVE_DECIMAL");
   }
   const [whole = "0", fraction = ""] = raw.split(".");
@@ -194,7 +208,11 @@ export const paperTradingAction: Action = {
     if (operation === "quote") {
       try {
         const symbol = text(input.symbol)?.toUpperCase();
-        if (!symbol) return failure("A public quote requires BTC or ETH.", "PAPER_MISSING_SYMBOL");
+        if (!symbol)
+          return failure(
+            "A public quote requires BTC or ETH.",
+            "PAPER_MISSING_SYMBOL",
+          );
         const quote = await getPaperTradingService(runtime).publicQuote(symbol);
         const output = [
           "PUBLIC MARKET DATA / READ ONLY",
@@ -203,20 +221,30 @@ export const paperTradingAction: Action = {
           `Observed: ${new Date(quote.observedAtMs).toISOString()}`,
           `Source: ${quote.source}`,
         ].join("\n");
-        await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
+        await callback?.({
+          text: output,
+          source: "action",
+          action: "PAPER_TRADING",
+        });
         return {
           success: true,
           text: output,
           userFacingText: output,
           verifiedUserFacing: true,
           turnComplete: true,
-          data: { actionName: "PAPER_TRADING", mode: "READ_ONLY", operation, quote: {
-            ...quote,
-            priceMicros: quote.priceMicros.toString(),
-          } },
+          data: {
+            actionName: "PAPER_TRADING",
+            mode: "READ_ONLY",
+            operation,
+            quote: {
+              ...quote,
+              priceMicros: quote.priceMicros.toString(),
+            },
+          },
         };
       } catch (error) {
-        const code = error instanceof Error ? error.message : "PUBLIC_QUOTE_FAILED";
+        const code =
+          error instanceof Error ? error.message : "PUBLIC_QUOTE_FAILED";
         return failure("The public quote could not be verified.", code);
       }
     }
@@ -224,21 +252,35 @@ export const paperTradingAction: Action = {
     if (operation === "backtest") {
       try {
         const symbol = text(input.symbol)?.toUpperCase();
-        const rawDays = typeof input.days === "number" ? input.days : Number(text(input.days) ?? "90");
-        if (!symbol || !["BTC", "ETH"].includes(symbol) || ![30, 90, 180, 365].includes(rawDays)) {
+        const rawDays =
+          typeof input.days === "number"
+            ? input.days
+            : Number(text(input.days) ?? "90");
+        if (
+          !symbol ||
+          !["BTC", "ETH"].includes(symbol) ||
+          ![30, 90, 180, 365].includes(rawDays)
+        ) {
           return failure(
             "A paper backtest requires BTC or ETH and days of 30, 90, 180, or 365.",
             "PAPER_INVALID_BACKTEST_PARAMETERS",
           );
         }
         const days = rawDays as 30 | 90 | 180 | 365;
-        const prices = await getPaperTradingService(runtime).publicHistory(symbol, days);
+        const prices = await getPaperTradingService(runtime).publicHistory(
+          symbol,
+          days,
+        );
         const result = runPaperBacktest(prices, undefined, {
           symbol,
           source: "coingecko-keyless",
           windowDays: days,
           retrievedAtMs: Date.now(),
         });
+        const baseScenario = result.scenarios.at(1);
+        const retrievedAtMs = result.runManifest.retrievedAtMs;
+        if (!baseScenario || retrievedAtMs === undefined)
+          throw new Error("PAPER_BACKTEST_INTERNAL_INVARIANT");
         const formatPercent = (bps: string): string => {
           const value = BigInt(bps);
           const sign = value < 0n ? "-" : "";
@@ -256,23 +298,30 @@ export const paperTradingAction: Action = {
           `Starting equity: ${formatUsdMicros(result.initialEquityMicros)}`,
           `Mark-to-market equity / return: ${formatUsdMicros(result.markToMarketEquityMicros)} / ${formatPercent(result.markToMarketReturnBps)}`,
           `Liquidation-value equity / return: ${formatUsdMicros(result.liquidationValueEquityMicros)} / ${formatPercent(result.liquidationReturnBps)}`,
-          `Base net comparison vs cash / buy-and-hold: ${formatPercent(result.scenarios[1]!.netVsCashBps)} / ${formatPercent(result.scenarios[1]!.netVsBuyHoldBps)} (not a profitability ranking)`,
-          `Liquidation-adjusted strategy / buy-and-hold max drawdown: ${formatPercent(result.scenarios[1]!.liquidationAdjustedMaxDrawdownBps)} / ${formatPercent(result.scenarios[1]!.buyHoldLiquidationAdjustedMaxDrawdownBps)}`,
+          `Base net comparison vs cash / buy-and-hold: ${formatPercent(baseScenario.netVsCashBps)} / ${formatPercent(baseScenario.netVsBuyHoldBps)} (not a profitability ranking)`,
+          `Liquidation-adjusted strategy / buy-and-hold max drawdown: ${formatPercent(baseScenario.liquidationAdjustedMaxDrawdownBps)} / ${formatPercent(baseScenario.buyHoldLiquidationAdjustedMaxDrawdownBps)}`,
           `Coverage: ${formatPercent(result.coverage.coverageBps)}; gaps: ${result.coverage.gapCount}; missing intervals: ${result.coverage.missingDailyIntervals}`,
-          ...result.scenarios.map((scenario) => `Friction ${scenario.name}: fee ${scenario.feeBps} bps, spread ${scenario.spreadBps} bps, market impact ${scenario.marketImpactBps} bps [${scenario.costProvenance}]; liquidation return ${formatPercent(scenario.liquidationReturnBps)}; ${scenario.assumptions}`),
+          ...result.scenarios.map(
+            (scenario) =>
+              `Friction ${scenario.name}: fee ${scenario.feeBps} bps, spread ${scenario.spreadBps} bps, market impact ${scenario.marketImpactBps} bps [${scenario.costProvenance}]; liquidation return ${formatPercent(scenario.liquidationReturnBps)}; ${scenario.assumptions}`,
+          ),
           ...result.warnings.map((warning) => `Warning: ${warning}`),
           `Final research signal: ${result.finalSignal}`,
           `Dataset as of: ${new Date(result.asOfMs).toISOString()}`,
-          `Retrieved at: ${new Date(result.runManifest.retrievedAtMs!).toISOString()}`,
+          `Retrieved at: ${new Date(retrievedAtMs).toISOString()}`,
           `Reproducible input SHA-256: ${result.runManifest.inputSha256}`,
           `Manifest schema: ${result.runManifest.schemaVersion}`,
           `Execution: ${result.runManifest.executionSemantics}`,
-          `Comparison status: ${result.scenarios[1]!.comparisonStatus}; venue basis: ${result.runManifest.venueBasis}`,
+          `Comparison status: ${baseScenario.comparisonStatus}; venue basis: ${result.runManifest.venueBasis}`,
           `Drawdown convention: ${result.runManifest.drawdownConvention}`,
           `Algorithm: ${result.algorithmVersion}`,
           "UNVERIFIED RESEARCH: observations are not asserted to be market opens. This is not a forecast, validation, or live-trade instruction.",
         ].join("\n");
-        await callback?.({ text: output, source: "action", action: "PAPER_TRADING" });
+        await callback?.({
+          text: output,
+          source: "action",
+          action: "PAPER_TRADING",
+        });
         return {
           success: true,
           text: output,
@@ -289,8 +338,12 @@ export const paperTradingAction: Action = {
           },
         };
       } catch (error) {
-        const code = error instanceof Error ? error.message : "PAPER_BACKTEST_FAILED";
-        return failure("The paper backtest could not be completed safely.", code);
+        const code =
+          error instanceof Error ? error.message : "PAPER_BACKTEST_FAILED";
+        return failure(
+          "The paper backtest could not be completed safely.",
+          code,
+        );
       }
     }
 
@@ -306,9 +359,12 @@ export const paperTradingAction: Action = {
       const quantityAtomic = decimalToFixed(input.quantity, ASSET_SCALE, 8);
       const suppliedPrice = text(input.priceUsd);
       const service = getPaperTradingService(runtime);
-      const publicQuote = suppliedPrice ? undefined : await service.publicQuote(symbol);
+      const publicQuote = suppliedPrice
+        ? undefined
+        : await service.publicQuote(symbol);
       const quoteSource = publicQuote?.source ?? text(input.quoteSource);
-      const observedAt = publicQuote?.observedAtMs ??
+      const observedAt =
+        publicQuote?.observedAtMs ??
         Date.parse(text(input.quoteObservedAt) ?? "");
       if (!quoteSource || !Number.isFinite(observedAt)) {
         return failure(
@@ -316,8 +372,8 @@ export const paperTradingAction: Action = {
           "PAPER_MISSING_QUOTE_FIELDS",
         );
       }
-      const priceMicros = publicQuote?.priceMicros ??
-        decimalToFixed(suppliedPrice, USD_SCALE, 6);
+      const priceMicros =
+        publicQuote?.priceMicros ?? decimalToFixed(suppliedPrice, USD_SCALE, 6);
       const auditLengthBefore = service.snapshot().auditLength;
       const receipt = service.execute({
         idempotencyKey,
@@ -347,7 +403,9 @@ export const paperTradingAction: Action = {
         ...(receipt.notionalMicros
           ? [`Notional: ${formatUsdMicros(receipt.notionalMicros)}`]
           : []),
-        ...(receipt.feeMicros ? [`Modeled fee: ${formatUsdMicros(receipt.feeMicros)}`] : []),
+        ...(receipt.feeMicros
+          ? [`Modeled fee: ${formatUsdMicros(receipt.feeMicros)}`]
+          : []),
         `Audit receipt: ${receipt.hash}`,
       ].join("\n");
       await callback?.({
@@ -371,14 +429,16 @@ export const paperTradingAction: Action = {
         },
       };
     } catch (error) {
-      const code = error instanceof Error ? error.message : "PAPER_INVALID_ORDER";
+      const code =
+        error instanceof Error ? error.message : "PAPER_INVALID_ORDER";
       return failure("The simulated order parameters were invalid.", code);
     }
   },
   parameters: [
     {
       name: "operation",
-      description: "Paper operation: status, report, quote, backtest, buy, or sell.",
+      description:
+        "Paper operation: status, report, quote, backtest, buy, or sell.",
       required: true,
       schema: { type: "string", enum: [...OPERATIONS] },
     },
@@ -422,7 +482,8 @@ export const paperTradingAction: Action = {
     },
     {
       name: "idempotencyKey",
-      description: "Unique key preventing a simulated order from filling twice.",
+      description:
+        "Unique key preventing a simulated order from filling twice.",
       required: false,
       schema: { type: "string", minLength: 1 },
     },

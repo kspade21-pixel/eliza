@@ -1,9 +1,9 @@
-import {
-  type IAgentRuntime,
-  type Memory,
-  type Provider,
-  type ProviderResult,
-  type State,
+import type {
+  IAgentRuntime,
+  Memory,
+  Provider,
+  ProviderResult,
+  State,
 } from "@elizaos/core";
 import { getPaperTradingService } from "./service.js";
 
@@ -45,8 +45,7 @@ export const paperTradingProvider: Provider = {
     } catch (error) {
       runtime.reportError("paper-trading.provider", error);
       return {
-        text:
-          "PAPER TRADING: unavailable. Do not infer a zero balance or claim that a simulated order was recorded.",
+        text: "PAPER TRADING: unavailable. Do not infer a zero balance or claim that a simulated order was recorded.",
         values: {
           paperTradingAvailable: false,
           paperTradingMode: "PAPER",
