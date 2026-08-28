@@ -393,6 +393,7 @@ export class PaperTradingEngine {
     for (const [index, receipt] of engine.audit.entries()) {
       if (
         receipt.sequence !== index + 1 ||
+        !isNonNegativeSafeInteger(receipt.recordedAtMs) ||
         !receipt.idempotencyKey?.trim() ||
         engine.#receiptsByKey.has(receipt.idempotencyKey)
       ) {
