@@ -3,10 +3,10 @@ import {
   buildPaperDryRunPlan,
   DEFAULT_PAPER_POLICY,
   NoOpExecutionAdapter,
-  PaperTradingEngine,
-  validatePaperApprovalIntent,
   type PaperApprovalIntent,
   type PaperOrder,
+  PaperTradingEngine,
+  validatePaperApprovalIntent,
 } from "../src/index.js";
 
 const NOW = 1_787_545_600_000;
@@ -181,12 +181,12 @@ describe("paper launch readiness", () => {
       executed: false,
       reason: "APPROVAL_REQUIRED",
     });
-    expect(
-      adapter.evaluate(plan, approval("0".repeat(64)), NOW),
-    ).toMatchObject({
-      executed: false,
-      reason: "INVALID_APPROVAL_INTENT",
-    });
+    expect(adapter.evaluate(plan, approval("0".repeat(64)), NOW)).toMatchObject(
+      {
+        executed: false,
+        reason: "INVALID_APPROVAL_INTENT",
+      },
+    );
     expect(
       adapter.evaluate(
         plan,
@@ -247,7 +247,9 @@ describe("paper launch readiness", () => {
     const intent = approval(valid.planHash);
     const adapter = new NoOpExecutionAdapter();
 
-    expect(() => validatePaperApprovalIntent(malformed, intent, NOW)).not.toThrow();
+    expect(() =>
+      validatePaperApprovalIntent(malformed, intent, NOW),
+    ).not.toThrow();
     expect(validatePaperApprovalIntent(malformed, intent, NOW)).toBe(false);
     expect(() => adapter.evaluate(malformed, intent, NOW)).not.toThrow();
     expect(adapter.evaluate(malformed, intent, NOW)).toMatchObject({
