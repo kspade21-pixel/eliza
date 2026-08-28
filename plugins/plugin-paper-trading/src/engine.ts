@@ -443,7 +443,7 @@ export class PaperTradingEngine {
       engine.audit.length,
       ...state.audit.map((receipt) => ({ ...receipt })),
     );
-    let expectedCashBefore = engine.policy.initialCashMicros.toString();
+    const replayEngine = new PaperTradingEngine(engine.policy);
     for (const [index, receipt] of engine.audit.entries()) {
       const normalizedSymbol =
         typeof receipt.symbol === "string"
@@ -488,7 +488,8 @@ export class PaperTradingEngine {
         (!hasAcceptedFillShape && !hasRejectedShape) ||
         !isUnsignedDecimal(receipt.cashBeforeMicros) ||
         !isUnsignedDecimal(receipt.cashAfterMicros) ||
-        receipt.cashBeforeMicros !== expectedCashBefore ||
+        receipt.cashBeforeMicros !==
+          replayEngine.ledger.cashMicros.toString() ||
         typeof receipt.previousHash !== "string" ||
         !SHA256.test(receipt.previousHash) ||
         typeof receipt.hash !== "string" ||
@@ -518,54 +519,67 @@ export class PaperTradingEngine {
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
-        const quantity = BigInt(quantityAtomic);
-        const quotePrice = BigInt(quotePriceMicros);
-        const executionPrice = BigInt(executionPriceMicros);
-        const notional = BigInt(notionalMicros);
-        const fee = BigInt(feeMicros);
-        const cashBefore = BigInt(receipt.cashBeforeMicros);
-        const cashAfter = BigInt(receipt.cashAfterMicros);
-        const expectedExecutionPrice =
-          receipt.side === "buy"
-            ? ceilDiv(
-                quotePrice * (BPS_SCALE + engine.policy.slippageBps),
-                BPS_SCALE,
-              )
-            : floorDiv(
-                quotePrice * (BPS_SCALE - engine.policy.slippageBps),
-                BPS_SCALE,
-              );
-        const expectedNotional =
-          receipt.side === "buy"
-            ? ceilDiv(executionPrice * quantity, ASSET_SCALE)
-            : floorDiv(executionPrice * quantity, ASSET_SCALE);
-        const expectedFee = ceilDiv(
-          notional * engine.policy.feeBps,
-          BPS_SCALE,
-        );
-        const expectedCashAfter =
-          receipt.side === "buy"
-            ? cashBefore - notional - fee
-            : cashBefore + notional - fee;
+        const replayed = replayEngine.execute({
+          idempotencyKey: receipt.idempotencyKey,
+          side: receipt.side,
+          symbol: normalizedSymbol,
+          quantityAtomic: BigInt(quantityAtomic),
+          quote: {
+            symbol: normalizedSymbol,
+            priceMicros: BigInt(quotePriceMicros),
+            observedAtMs: receipt.recordedAtMs,
+            source: "restored-audit-replay",
+          },
+          requestedAtMs: receipt.recordedAtMs,
+        });
         if (
-          executionPrice !== expectedExecutionPrice ||
-          notional !== expectedNotional ||
-          fee !== expectedFee ||
-          fee >= notional ||
-          expectedCashAfter < 0n ||
-          cashAfter !== expectedCashAfter
+          !replayed.accepted ||
+          replayed.reason !== receipt.reason ||
+          replayed.executionPriceMicros !== executionPriceMicros ||
+          replayed.notionalMicros !== notionalMicros ||
+          replayed.feeMicros !== feeMicros ||
+          replayed.cashBeforeMicros !== receipt.cashBeforeMicros ||
+          replayed.cashAfterMicros !== receipt.cashAfterMicros
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
-      } else if (receipt.cashAfterMicros !== receipt.cashBeforeMicros) {
+      } else if (
+        receipt.cashAfterMicros !== receipt.cashBeforeMicros ||
+        receipt.cashAfterMicros !==
+          replayEngine.ledger.cashMicros.toString()
+      ) {
         throw new Error("INVALID_PAPER_STATE_AUDIT");
       }
 
-      expectedCashBefore = receipt.cashAfterMicros;
       engine.#receiptsByKey.set(receipt.idempotencyKey, receipt);
     }
     if (!engine.verifyAuditChain()) {
       throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
+    }
+    const replayedPositionsMatch =
+      replayEngine.ledger.positions.size ===
+        engine.ledger.positions.size &&
+      [...replayEngine.ledger.positions.entries()].every(
+        ([symbol, replayed]) => {
+          const restored = engine.ledger.positions.get(symbol);
+          return (
+            restored !== undefined &&
+            restored.symbol === replayed.symbol &&
+            restored.quantityAtomic === replayed.quantityAtomic &&
+            restored.costBasisMicros === replayed.costBasisMicros &&
+            restored.lastMarkPriceMicros ===
+              replayed.lastMarkPriceMicros
+          );
+        },
+      );
+    if (
+      replayEngine.ledger.cashMicros !== engine.ledger.cashMicros ||
+      replayEngine.ledger.realizedPnlMicros !==
+        engine.ledger.realizedPnlMicros ||
+      replayEngine.ledger.halted !== engine.ledger.halted ||
+      !replayedPositionsMatch
+    ) {
+      throw new Error("INVALID_PAPER_STATE_AUDIT");
     }
     const finalCash = engine.audit.at(-1)?.cashAfterMicros;
     if (
