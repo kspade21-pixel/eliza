@@ -501,9 +501,7 @@ export class PaperTradingEngine {
         typeof receipt.hash !== "string" ||
         !SHA256.test(receipt.hash) ||
         !isNonNegativeSafeInteger(receipt.recordedAtMs) ||
-        Object.keys(receipt).some(
-          (key) => !PAPER_AUDIT_RECEIPT_KEYS.has(key),
-        )
+        Object.keys(receipt).some((key) => !PAPER_AUDIT_RECEIPT_KEYS.has(key))
       ) {
         throw new Error("INVALID_PAPER_STATE_AUDIT");
       }
@@ -522,8 +520,7 @@ export class PaperTradingEngine {
             (!isPositiveDecimal(receipt.quantityAtomic) ||
               !isPositiveDecimal(receipt.quotePriceMicros))) ||
           receipt.cashAfterMicros !== receipt.cashBeforeMicros ||
-          receipt.cashAfterMicros !==
-            replayEngine.ledger.cashMicros.toString()
+          receipt.cashAfterMicros !== replayEngine.ledger.cashMicros.toString()
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
@@ -550,11 +547,7 @@ export class PaperTradingEngine {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
         }
         if (receipt.accepted) {
-          const {
-            executionPriceMicros,
-            feeMicros,
-            notionalMicros,
-          } = receipt;
+          const { executionPriceMicros, feeMicros, notionalMicros } = receipt;
           if (
             !isPositiveDecimal(executionPriceMicros) ||
             !isUnsignedDecimal(feeMicros) ||
@@ -574,8 +567,7 @@ export class PaperTradingEngine {
       throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
     }
     const replayedPositionsMatch =
-      replayEngine.ledger.positions.size ===
-        engine.ledger.positions.size &&
+      replayEngine.ledger.positions.size === engine.ledger.positions.size &&
       [...replayEngine.ledger.positions.entries()].every(
         ([symbol, replayed]) => {
           const restored = engine.ledger.positions.get(symbol);
@@ -584,8 +576,7 @@ export class PaperTradingEngine {
             restored.symbol === replayed.symbol &&
             restored.quantityAtomic === replayed.quantityAtomic &&
             restored.costBasisMicros === replayed.costBasisMicros &&
-            restored.lastMarkPriceMicros ===
-              replayed.lastMarkPriceMicros
+            restored.lastMarkPriceMicros === replayed.lastMarkPriceMicros
           );
         },
       );
