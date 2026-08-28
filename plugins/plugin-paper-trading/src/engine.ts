@@ -26,6 +26,10 @@ function sha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function isNonNegativeSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function policyCommitment(policy: RiskPolicy): string {
   return sha256({
     schemaVersion: POLICY_COMMITMENT_VERSION,
@@ -448,6 +452,12 @@ export class PaperTradingEngine {
     if (order.quote.priceMicros <= 0n || order.quantityAtomic <= 0n) {
       return "INVALID_ORDER_VALUE";
     }
+    if (
+      !isNonNegativeSafeInteger(order.requestedAtMs) ||
+      !isNonNegativeSafeInteger(order.quote.observedAtMs)
+    ) {
+      return "INVALID_ORDER_TIMESTAMP";
+    }
     const quoteAge = order.requestedAtMs - order.quote.observedAtMs;
     if (quoteAge < 0 || quoteAge > this.policy.maxQuoteAgeMs) {
       return "STALE_OR_FUTURE_QUOTE";
@@ -507,7 +517,9 @@ export class PaperTradingEngine {
       cashBeforeMicros: cashBefore.toString(),
       cashAfterMicros: this.ledger.cashMicros.toString(),
       previousHash,
-      recordedAtMs: order.requestedAtMs,
+      recordedAtMs: isNonNegativeSafeInteger(order.requestedAtMs)
+        ? order.requestedAtMs
+        : 0,
     };
     const receipt: AuditReceipt = {
       ...unsigned,
