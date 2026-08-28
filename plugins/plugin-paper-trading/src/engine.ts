@@ -1,3 +1,7 @@
+/**
+ * Enforces deterministic wallet-free paper fills, risk limits, audit receipts,
+ * and versioned whole-state commitments for restart-safe simulation.
+ */
 import { createHash } from "node:crypto";
 import {
   ASSET_SCALE,
@@ -12,6 +16,35 @@ import {
 } from "./types.js";
 
 const ZERO_HASH = "0".repeat(64);
+const SHA256 = /^[a-f0-9]{64}$/;
+const POLICY_COMMITMENT_VERSION = "paper-risk-policy-commitment/v1";
+const STATE_COMMITMENT_VERSION = "paper-engine-state-commitment/v1";
+
+type PaperEngineStateCommitment = Omit<PaperEngineState, "stateSha256">;
+
+function sha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function policyCommitment(policy: RiskPolicy): string {
+  return sha256({
+    schemaVersion: POLICY_COMMITMENT_VERSION,
+    initialCashMicros: policy.initialCashMicros.toString(),
+    maxOrderMicros: policy.maxOrderMicros.toString(),
+    maxSymbolExposureMicros: policy.maxSymbolExposureMicros.toString(),
+    maxGrossExposureMicros: policy.maxGrossExposureMicros.toString(),
+    minCashReserveMicros: policy.minCashReserveMicros.toString(),
+    maxDailyLossMicros: policy.maxDailyLossMicros.toString(),
+    feeBps: policy.feeBps.toString(),
+    slippageBps: policy.slippageBps.toString(),
+    maxQuoteAgeMs: policy.maxQuoteAgeMs,
+    symbolAllowlist: [...policy.symbolAllowlist].sort(),
+  });
+}
+
+function stateCommitment(state: PaperEngineStateCommitment): string {
+  return sha256({ schemaVersion: STATE_COMMITMENT_VERSION, state });
+}
 
 function ceilDiv(value: bigint, divisor: bigint): bigint {
   if (value < 0n || divisor <= 0n) {
@@ -56,12 +89,12 @@ export class PaperTradingEngine {
   readonly #receiptsByKey = new Map<string, AuditReceipt>();
 
   constructor(policy: RiskPolicy = DEFAULT_PAPER_POLICY) {
-    this.policy = {
+    this.policy = Object.freeze({
       ...policy,
-      symbolAllowlist: policy.symbolAllowlist.map((symbol) =>
-        symbol.trim().toUpperCase(),
+      symbolAllowlist: Object.freeze(
+        policy.symbolAllowlist.map((symbol) => symbol.trim().toUpperCase()),
       ),
-    };
+    });
     this.#validatePolicy();
     this.ledger = {
       cashMicros: this.policy.initialCashMicros,
@@ -259,8 +292,9 @@ export class PaperTradingEngine {
   }
 
   exportState(): PaperEngineState {
-    return {
-      version: 1,
+    const state: PaperEngineStateCommitment = {
+      version: 2,
+      policySha256: policyCommitment(this.policy),
       cashMicros: this.ledger.cashMicros.toString(),
       realizedPnlMicros: this.ledger.realizedPnlMicros.toString(),
       halted: this.ledger.halted,
@@ -272,6 +306,7 @@ export class PaperTradingEngine {
       })),
       audit: this.audit.map((receipt) => ({ ...receipt })),
     };
+    return { ...state, stateSha256: stateCommitment(state) };
   }
 
   static fromState(
@@ -280,11 +315,18 @@ export class PaperTradingEngine {
   ): PaperTradingEngine {
     if (
       !state ||
-      state.version !== 1 ||
+      state.version !== 2 ||
       !Array.isArray(state.positions) ||
       !Array.isArray(state.audit)
     ) {
       throw new Error("INVALID_PAPER_STATE_VERSION");
+    }
+    if (!SHA256.test(state.policySha256) || !SHA256.test(state.stateSha256)) {
+      throw new Error("INVALID_PAPER_STATE_CHECKSUM");
+    }
+    const { stateSha256, ...committedState } = state;
+    if (stateCommitment(committedState) !== stateSha256) {
+      throw new Error("INVALID_PAPER_STATE_CHECKSUM");
     }
     const parseUnsigned = (value: string, field: string): bigint => {
       if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/.test(value)) {
@@ -298,14 +340,20 @@ export class PaperTradingEngine {
       }
       return BigInt(value);
     };
+    if (typeof state.halted !== "boolean") {
+      throw new Error("INVALID_PAPER_STATE_HALTED");
+    }
 
     const engine = new PaperTradingEngine(policy);
+    if (policyCommitment(engine.policy) !== state.policySha256) {
+      throw new Error("INVALID_PAPER_STATE_POLICY_MISMATCH");
+    }
     engine.ledger.cashMicros = parseUnsigned(state.cashMicros, "CASH");
     engine.ledger.realizedPnlMicros = parseSigned(
       state.realizedPnlMicros,
       "REALIZED_PNL",
     );
-    engine.ledger.halted = state.halted === true;
+    engine.ledger.halted = state.halted;
     engine.ledger.positions.clear();
 
     for (const stored of state.positions) {
