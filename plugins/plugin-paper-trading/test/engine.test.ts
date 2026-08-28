@@ -136,6 +136,84 @@ describe("PaperTradingEngine", () => {
     ).not.toThrow();
   });
 
+  it("rejects unsafe order timestamps without mutating durable paper state", () => {
+    const invalidTimestamps = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+    const timestampFields = ["requestedAtMs", "observedAtMs"] as const;
+
+    for (const [index, invalidTimestamp] of invalidTimestamps.entries()) {
+      for (const field of timestampFields) {
+        const engine = new PaperTradingEngine();
+        const baseOrder = order({
+          idempotencyKey: `invalid-${field}-${index}`,
+        });
+        const request: PaperOrder =
+          field === "requestedAtMs"
+            ? { ...baseOrder, requestedAtMs: invalidTimestamp }
+            : {
+                ...baseOrder,
+                quote: {
+                  ...baseOrder.quote,
+                  observedAtMs: invalidTimestamp,
+                },
+              };
+        const before = engine.snapshot();
+        const receipt = engine.execute(request);
+        const after = engine.snapshot();
+
+        expect(receipt).toMatchObject({
+          accepted: false,
+          reason: "INVALID_ORDER_TIMESTAMP",
+        });
+        expect(Number.isSafeInteger(receipt.recordedAtMs)).toBe(true);
+        expect(receipt.recordedAtMs).toBeGreaterThanOrEqual(0);
+        expect(after).toEqual({
+          ...before,
+          auditLength: before.auditLength + 1,
+        });
+        expect(engine.verifyAuditChain()).toBe(true);
+
+        const state = engine.exportState();
+        const serialized = JSON.stringify(state);
+        expect(serialized).not.toContain("null");
+        expect(
+          PaperTradingEngine.fromState(
+            JSON.parse(serialized) as PaperEngineState,
+          ).exportState(),
+        ).toEqual(state);
+      }
+    }
+
+    const epochEngine = new PaperTradingEngine();
+    const epochOrder = order({
+      idempotencyKey: "epoch-zero",
+      requestedAtMs: 0,
+      quote: {
+        symbol: "BTC",
+        priceMicros: BTC_PRICE_MICROS,
+        observedAtMs: 0,
+        source: "verified-test-fixture",
+      },
+    });
+    expect(epochEngine.execute(epochOrder)).toMatchObject({
+      accepted: true,
+      reason: "SIMULATED_FILL",
+      recordedAtMs: 0,
+    });
+    const epochState = epochEngine.exportState();
+    expect(
+      PaperTradingEngine.fromState(
+        JSON.parse(JSON.stringify(epochState)) as PaperEngineState,
+      ).exportState(),
+    ).toEqual(epochState);
+  });
+
   it("rejects stale and over-limit orders without changing the simulated ledger", () => {
     const engine = new PaperTradingEngine();
     const stale = engine.execute(
