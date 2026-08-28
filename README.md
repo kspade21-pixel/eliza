@@ -76,6 +76,10 @@ Availability depends on the operating system, installed plugins, granted
 permissions, and configured model or service providers. Package-level READMEs
 document the exact support and setup for each capability.
 
+Paper-trading dry-run approvals require a fresh, never-before-used idempotency
+key for every proposed order. A key already present in persisted audit state is
+rejected and must not be reused to obtain a new approval plan.
+
 ### The framework
 
 The framework is model-agnostic and extended through plugins:
