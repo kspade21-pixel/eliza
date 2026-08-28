@@ -14,7 +14,9 @@ This package is simulation-only. It has:
 - no claim or guarantee of profitability.
 
 Every trading result is labeled `PAPER`. Quotes may be explicitly supplied with provenance or fetched from the fixed read-only public source. Stale, future, mismatched, or
-unapproved-symbol quotes fail closed.
+unapproved-symbol quotes fail closed. Custom risk policies must set
+`maxQuoteAgeMs` to a positive safe integer in milliseconds; non-finite,
+fractional, zero, and negative values fail during engine construction.
 
 ## Default $20 policy
 
