@@ -530,8 +530,7 @@ describe("PaperTradingEngine", () => {
           quote: {
             symbol: "BTC",
             priceMicros: BTC_PRICE_MICROS,
-            observedAtMs:
-              NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
+            observedAtMs: NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
             source: "verified-test-fixture",
           },
         }),
@@ -557,8 +556,7 @@ describe("PaperTradingEngine", () => {
       if (!receipt) throw new Error("Expected a paper audit receipt");
       const executionPrice = 50_100_000_000n;
       const notional =
-        (executionPrice * quantityAtomic + 100_000_000n - 1n) /
-        100_000_000n;
+        (executionPrice * quantityAtomic + 100_000_000n - 1n) / 100_000_000n;
       const fee = (notional * 10n + 10_000n - 1n) / 10_000n;
       const debit = notional + fee;
       receipt.quantityAtomic = quantityAtomic.toString();
