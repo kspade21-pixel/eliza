@@ -30,6 +30,59 @@ function isNonNegativeSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
+const CANONICAL_INTEGER = /^(?:0|-?[1-9]\d*)$/;
+const UNSIGNED_DECIMAL = /^(?:0|[1-9]\d*)$/;
+const POSITIVE_DECIMAL = /^[1-9]\d*$/;
+const PAPER_AUDIT_REASONS = new Set([
+  "ORDER_TOO_SMALL_AFTER_ROUNDING",
+  "MAX_ORDER_EXCEEDED",
+  "INSUFFICIENT_CASH",
+  "MIN_RESERVE_BREACH",
+  "MAX_SYMBOL_EXPOSURE_EXCEEDED",
+  "MAX_GROSS_EXPOSURE_EXCEEDED",
+  "INSUFFICIENT_PAPER_POSITION",
+  "SIMULATED_FILL",
+  "MISSING_IDEMPOTENCY_KEY",
+  "DAILY_LOSS_HALT",
+  "SYMBOL_NOT_ALLOWED",
+  "QUOTE_SYMBOL_MISMATCH",
+  "MISSING_QUOTE_PROVENANCE",
+  "INVALID_ORDER_VALUE",
+  "INVALID_ORDER_TIMESTAMP",
+  "STALE_OR_FUTURE_QUOTE",
+]);
+const PAPER_AUDIT_RECEIPT_KEYS = new Set([
+  "sequence",
+  "mode",
+  "accepted",
+  "reason",
+  "idempotencyKey",
+  "side",
+  "symbol",
+  "quantityAtomic",
+  "quotePriceMicros",
+  "executionPriceMicros",
+  "notionalMicros",
+  "feeMicros",
+  "cashBeforeMicros",
+  "cashAfterMicros",
+  "previousHash",
+  "hash",
+  "recordedAtMs",
+]);
+
+function isCanonicalInteger(value: unknown): value is string {
+  return typeof value === "string" && CANONICAL_INTEGER.test(value);
+}
+
+function isUnsignedDecimal(value: unknown): value is string {
+  return typeof value === "string" && UNSIGNED_DECIMAL.test(value);
+}
+
+function isPositiveDecimal(value: unknown): value is string {
+  return typeof value === "string" && POSITIVE_DECIMAL.test(value);
+}
+
 function policyCommitment(policy: RiskPolicy): string {
   return sha256({
     schemaVersion: POLICY_COMMITMENT_VERSION,
@@ -390,15 +443,125 @@ export class PaperTradingEngine {
       engine.audit.length,
       ...state.audit.map((receipt) => ({ ...receipt })),
     );
+    let expectedCashBefore = engine.policy.initialCashMicros.toString();
     for (const [index, receipt] of engine.audit.entries()) {
+      const normalizedSymbol =
+        typeof receipt.symbol === "string"
+          ? receipt.symbol.trim().toUpperCase()
+          : "";
+      const hasAcceptedFillShape =
+        receipt.accepted === true &&
+        receipt.reason === "SIMULATED_FILL" &&
+        isPositiveDecimal(receipt.quantityAtomic) &&
+        isPositiveDecimal(receipt.quotePriceMicros) &&
+        isPositiveDecimal(receipt.executionPriceMicros) &&
+        isPositiveDecimal(receipt.notionalMicros) &&
+        isUnsignedDecimal(receipt.feeMicros);
+      const hasRejectedShape =
+        receipt.accepted === false &&
+        receipt.reason !== "SIMULATED_FILL" &&
+        isCanonicalInteger(receipt.quantityAtomic) &&
+        isCanonicalInteger(receipt.quotePriceMicros) &&
+        !Object.prototype.hasOwnProperty.call(
+          receipt,
+          "executionPriceMicros",
+        ) &&
+        !Object.prototype.hasOwnProperty.call(receipt, "notionalMicros") &&
+        !Object.prototype.hasOwnProperty.call(receipt, "feeMicros");
+      const hasValidIdempotencyKey =
+        typeof receipt.idempotencyKey === "string" &&
+        (receipt.reason === "MISSING_IDEMPOTENCY_KEY"
+          ? receipt.idempotencyKey.trim().length === 0
+          : receipt.idempotencyKey.trim().length > 0);
       if (
+        !Number.isSafeInteger(receipt.sequence) ||
         receipt.sequence !== index + 1 ||
+        receipt.mode !== "PAPER" ||
+        !PAPER_AUDIT_REASONS.has(receipt.reason) ||
+        !hasValidIdempotencyKey ||
+        engine.#receiptsByKey.has(receipt.idempotencyKey) ||
+        (receipt.side !== "buy" && receipt.side !== "sell") ||
+        typeof receipt.symbol !== "string" ||
+        receipt.symbol !== normalizedSymbol ||
+        (receipt.accepted === true &&
+          !engine.policy.symbolAllowlist.includes(normalizedSymbol)) ||
+        (!hasAcceptedFillShape && !hasRejectedShape) ||
+        !isUnsignedDecimal(receipt.cashBeforeMicros) ||
+        !isUnsignedDecimal(receipt.cashAfterMicros) ||
+        receipt.cashBeforeMicros !== expectedCashBefore ||
+        typeof receipt.previousHash !== "string" ||
+        !SHA256.test(receipt.previousHash) ||
+        typeof receipt.hash !== "string" ||
+        !SHA256.test(receipt.hash) ||
         !isNonNegativeSafeInteger(receipt.recordedAtMs) ||
-        !receipt.idempotencyKey?.trim() ||
-        engine.#receiptsByKey.has(receipt.idempotencyKey)
+        Object.keys(receipt).some(
+          (key) => !PAPER_AUDIT_RECEIPT_KEYS.has(key),
+        )
       ) {
         throw new Error("INVALID_PAPER_STATE_AUDIT");
       }
+
+      if (receipt.accepted) {
+        const {
+          executionPriceMicros,
+          feeMicros,
+          notionalMicros,
+          quantityAtomic,
+          quotePriceMicros,
+        } = receipt;
+        if (
+          !isPositiveDecimal(executionPriceMicros) ||
+          !isUnsignedDecimal(feeMicros) ||
+          !isPositiveDecimal(notionalMicros) ||
+          !isPositiveDecimal(quantityAtomic) ||
+          !isPositiveDecimal(quotePriceMicros)
+        ) {
+          throw new Error("INVALID_PAPER_STATE_AUDIT");
+        }
+        const quantity = BigInt(quantityAtomic);
+        const quotePrice = BigInt(quotePriceMicros);
+        const executionPrice = BigInt(executionPriceMicros);
+        const notional = BigInt(notionalMicros);
+        const fee = BigInt(feeMicros);
+        const cashBefore = BigInt(receipt.cashBeforeMicros);
+        const cashAfter = BigInt(receipt.cashAfterMicros);
+        const expectedExecutionPrice =
+          receipt.side === "buy"
+            ? ceilDiv(
+                quotePrice * (BPS_SCALE + engine.policy.slippageBps),
+                BPS_SCALE,
+              )
+            : floorDiv(
+                quotePrice * (BPS_SCALE - engine.policy.slippageBps),
+                BPS_SCALE,
+              );
+        const expectedNotional =
+          receipt.side === "buy"
+            ? ceilDiv(executionPrice * quantity, ASSET_SCALE)
+            : floorDiv(executionPrice * quantity, ASSET_SCALE);
+        const expectedFee = ceilDiv(
+          notional * engine.policy.feeBps,
+          BPS_SCALE,
+        );
+        const expectedCashAfter =
+          receipt.side === "buy"
+            ? cashBefore - notional - fee
+            : cashBefore + notional - fee;
+        if (
+          executionPrice !== expectedExecutionPrice ||
+          notional !== expectedNotional ||
+          fee !== expectedFee ||
+          fee >= notional ||
+          expectedCashAfter < 0n ||
+          cashAfter !== expectedCashAfter
+        ) {
+          throw new Error("INVALID_PAPER_STATE_AUDIT");
+        }
+      } else if (receipt.cashAfterMicros !== receipt.cashBeforeMicros) {
+        throw new Error("INVALID_PAPER_STATE_AUDIT");
+      }
+
+      expectedCashBefore = receipt.cashAfterMicros;
       engine.#receiptsByKey.set(receipt.idempotencyKey, receipt);
     }
     if (!engine.verifyAuditChain()) {
