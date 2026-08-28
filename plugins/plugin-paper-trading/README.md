@@ -57,7 +57,9 @@ The owner-only `PAPER_TRADING` action supports:
 Buy and sell require a decimal quantity and idempotency key. They may use a fresh public quote or an explicitly supplied USD quote with source and ISO-8601 observation time. Quotes older than five minutes, future quotes, missing provenance, and symbols outside BTC/ETH are rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
 simulation-only.
 
-The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. Startup restores only versioned, hash-valid state and fails closed on corruption. Live execution remains out of scope.
+The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v2 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Startup rejects checksum or policy mismatches before restoring the ledger.
+
+Legacy v1 state is intentionally not auto-migrated because it did not commit every persisted field. Operators must archive the old paper-state file for audit, remove it from the active state path, and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
 
 
 ## Public historical backtesting
