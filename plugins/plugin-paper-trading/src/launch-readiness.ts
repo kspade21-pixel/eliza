@@ -56,9 +56,17 @@ export interface PaperApprovalIntent {
 export interface NoOpExecutionReceipt {
   mode: "PAPER_DRY_RUN";
   planHash: string;
-  approvalStatus: "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "APPROVAL_INVALID" | "APPROVAL_BOUND";
+  approvalStatus:
+    | "APPROVAL_REQUIRED"
+    | "APPROVAL_REJECTED"
+    | "APPROVAL_INVALID"
+    | "APPROVAL_BOUND";
   executed: false;
-  reason: "APPROVAL_REQUIRED" | "APPROVAL_REJECTED" | "INVALID_APPROVAL_INTENT" | "LIVE_EXECUTION_UNAVAILABLE_BY_DESIGN";
+  reason:
+    | "APPROVAL_REQUIRED"
+    | "APPROVAL_REJECTED"
+    | "INVALID_APPROVAL_INTENT"
+    | "LIVE_EXECUTION_UNAVAILABLE_BY_DESIGN";
 }
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -78,7 +86,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizePolicy(policy: RiskPolicy): PaperDryRunPlan["effectivePolicy"] {
+function normalizePolicy(
+  policy: RiskPolicy,
+): PaperDryRunPlan["effectivePolicy"] {
   if (!isRecord(policy)) throw new Error("INVALID_PAPER_DRY_RUN_POLICY");
   const bigintFields = [
     "initialCashMicros",
@@ -325,7 +335,9 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     "feeBps",
     "slippageBps",
   ] as const;
-  if (numericPolicyFields.some((field) => !INTEGER.test(String(policy[field])))) {
+  if (
+    numericPolicyFields.some((field) => !INTEGER.test(String(policy[field])))
+  ) {
     return undefined;
   }
   if (
