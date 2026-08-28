@@ -1,3 +1,7 @@
+/**
+ * Defines paper-only orders, risk policies, ledger snapshots, audit receipts,
+ * and versioned persistence contracts shared across the plugin.
+ */
 export const USD_SCALE = 1_000_000n;
 export const ASSET_SCALE = 100_000_000n;
 export const BPS_SCALE = 10_000n;
@@ -85,7 +89,8 @@ export interface PaperSnapshot {
 }
 
 export interface PaperEngineState {
-  version: 1;
+  version: 2;
+  policySha256: string;
   cashMicros: string;
   realizedPnlMicros: string;
   halted: boolean;
@@ -96,6 +101,7 @@ export interface PaperEngineState {
     lastMarkPriceMicros: string;
   }>;
   audit: AuditReceipt[];
+  stateSha256: string;
 }
 
 export interface PublicMarketQuote {
