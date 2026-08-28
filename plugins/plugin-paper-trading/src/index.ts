@@ -9,14 +9,6 @@ export {
 } from "./backtest.js";
 export { DEFAULT_PAPER_POLICY, PaperTradingEngine } from "./engine.js";
 export {
-  buildPaperDryRunPlan,
-  NoOpExecutionAdapter,
-  validatePaperApprovalIntent,
-  type NoOpExecutionReceipt,
-  type PaperApprovalIntent,
-  type PaperDryRunPlan,
-} from "./launch-readiness.js";
-export {
   DEFAULT_WALK_FORWARD_POLICY,
   hashPaperWalkForwardConfiguration,
   hashPublicHistoricalDataset,
@@ -31,6 +23,14 @@ export {
   type PaperWalkForwardProtocol,
   runPaperWalkForwardEvaluation,
 } from "./evaluation.js";
+export {
+  buildPaperDryRunPlan,
+  NoOpExecutionAdapter,
+  type NoOpExecutionReceipt,
+  type PaperApprovalIntent,
+  type PaperDryRunPlan,
+  validatePaperApprovalIntent,
+} from "./launch-readiness.js";
 export { CoinGeckoKeylessQuoteSource } from "./market-data.js";
 export { paperTradingPlugin, paperTradingPlugin as default } from "./plugin.js";
 export { paperTradingProvider } from "./provider.js";
