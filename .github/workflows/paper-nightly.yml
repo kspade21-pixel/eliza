@@ -6,8 +6,20 @@
 # one fails because the emitted record must say exactly which lanes are red.
 name: Paper Nightly
 
+run-name: Paper Nightly ${{ inputs.source_sha || github.sha }} ${{ inputs.effect_digest || 'manual' }}
+
 on:
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current develop SHA handed off by Develop Effect Reconcile
+        required: false
+        type: string
+      effect_digest:
+        description: Exact reconciler input digest; empty for manual operation
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: paper-nightly-${{ github.ref }}
@@ -34,8 +46,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
           submodules: false
+
+      - name: Bind run to the current develop tip
+        id: source
+        env:
+          EFFECT_DIGEST: ${{ inputs.effect_digest }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::source_sha must be a lowercase full commit SHA"
+            exit 1
+          }
+          if [ -n "$EFFECT_DIGEST" ]; then
+            [[ "$EFFECT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "::error::Invalid reconciled effect digest"
+              exit 1
+            }
+          fi
+          checked_out="$(git rev-parse HEAD)"
+          develop_tip="$(git ls-remote origin refs/heads/develop | awk '{print $1}')"
+          [[ "$checked_out" == "$SOURCE_SHA" ]] || {
+            echo "::error::checkout $checked_out does not match source $SOURCE_SHA"
+            exit 1
+          }
+          [[ "$develop_tip" == "$SOURCE_SHA" ]] || {
+            echo "::error::source $SOURCE_SHA is not the current develop tip $develop_tip"
+            exit 1
+          }
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -83,8 +125,8 @@ jobs:
           node packages/scripts/paper-status.mjs \
             --out=paper-status.json \
             --repository=${{ github.repository }} \
-            --ref=${{ github.ref_name }} \
-            --commit=${{ github.sha }} \
+            --ref=develop \
+            --commit=${{ steps.source.outputs.sha }} \
             --run-id=${{ github.run_id }} \
             --lane=install=${{ steps.install.outcome == 'success' && 'pass' || 'fail' }} \
             --lane=build-core=${{ steps.build_core.outcome == 'success' && 'pass' || 'fail' }} \
@@ -150,6 +192,12 @@ jobs:
             git rm -rf --cached . >/dev/null 2>&1 || true
             find . -mindepth 1 -maxdepth 1 ! -name .git ! -name incoming -exec rm -rf {} +
           fi
+          record_sha="$(jq -er '.commit | select(type == "string" and test("^[0-9a-f]{40}$"))' incoming/paper-status.json)"
+          develop_tip="$(git ls-remote origin refs/heads/develop | awk '{print $1}')"
+          [[ "$develop_tip" == "$record_sha" ]] || {
+            echo "::error::refusing to publish stale paper status $record_sha; develop is $develop_tip"
+            exit 1
+          }
           mkdir -p .
           cp incoming/paper-status.json paper-status.json
           rm -rf incoming

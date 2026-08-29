@@ -11,6 +11,7 @@ import {
   assessPaperLanes,
   buildPaperStatusRecord,
   inspectExecutionSurface,
+  PAPER_STATUS_MAX_AGE_MS,
   REQUIRED_PAPER_LANES,
 } from "../paper-status.mjs";
 
@@ -63,14 +64,14 @@ async function executionFixture({
       `${JSON.stringify(
         {
           name: "@elizaos/plugin-paper-trading",
+          exports: {
+            ".": {
+              "eliza-source": { import: "./src/index.ts" },
+            },
+          },
           elizaos: {
             scripts: {
-              paperStatus: {
-                executionSurface: {
-                  readiness: "src/launch-readiness.ts",
-                  index: "src/index.ts",
-                },
-              },
+              paperStatus: true,
             },
           },
         },
@@ -95,6 +96,8 @@ describe("paper status lane integrity", () => {
     const result = record(completeLanes());
 
     expect(result.overall).toBe("green");
+    expect(result.validUntil).toBe("2026-08-30T00:00:00.000Z");
+    expect(PAPER_STATUS_MAX_AGE_MS).toBe(86_400_000);
     expect(result.failingLanes).toEqual([]);
     expect(result.laneIntegrity).toEqual({
       required: [...REQUIRED_PAPER_LANES],
@@ -164,7 +167,7 @@ describe("paper status lane integrity", () => {
   });
 
   test("keeps the status producer and canonical PR gate wired to the contract", async () => {
-    const [nightly, staticSmoke] = await Promise.all([
+    const [nightly, staticSmoke, reconcile, effectsSource] = await Promise.all([
       readFile(
         join(repoRoot, ".github", "workflows", "paper-nightly.yml"),
         "utf8",
@@ -173,6 +176,11 @@ describe("paper status lane integrity", () => {
         join(repoRoot, ".github", "workflows", "pr-static-smoke.yml"),
         "utf8",
       ),
+      readFile(
+        join(repoRoot, ".github", "workflows", "develop-reconcile.yml"),
+        "utf8",
+      ),
+      readFile(join(repoRoot, ".github", "develop-effects.json"), "utf8"),
     ]);
     const emittedLanes = [...nightly.matchAll(/--lane=([^=\s]+)=/g)].map(
       (match) => match[1],
@@ -180,11 +188,30 @@ describe("paper status lane integrity", () => {
 
     expect(emittedLanes).toEqual([...REQUIRED_PAPER_LANES]);
     expect(nightly).toContain("id: status_contract");
+    expect(nightly).toContain("inputs.source_sha || github.sha");
+    expect(nightly).toContain("inputs.effect_digest || 'manual'");
+    expect(nightly).toContain('[[ "$develop_tip" == "$SOURCE_SHA" ]]');
+    expect(nightly).toContain('[[ "$develop_tip" == "$record_sha" ]]');
     expect(nightly).toContain(
       "bun test packages/scripts/__tests__/paper-status.test.ts",
     );
     expect(staticSmoke).toContain(
       "bun test packages/scripts/__tests__/paper-status.test.ts",
+    );
+    expect(reconcile).not.toContain("paper-nightly.yml/dispatches");
+    const effects = JSON.parse(effectsSource) as {
+      effects: Array<{
+        id: string;
+        workflow: string;
+        bindSourceSha?: boolean;
+      }>;
+    };
+    expect(effects.effects).toContainEqual(
+      expect.objectContaining({
+        id: "paper-status",
+        workflow: "paper-nightly.yml",
+        bindSourceSha: true,
+      }),
     );
   });
 });
@@ -235,45 +262,133 @@ describe("paper status execution boundary", () => {
     );
   });
 
-  test("fails closed when more than one workspace declares the surface", async () => {
+  test("ignores decoy metadata on a non-canonical workspace", async () => {
     const root = await executionFixture();
     const duplicate = join(root, "plugins", "plugin-shadow");
     await mkdir(duplicate, { recursive: true });
     await writeFile(
       join(duplicate, "package.json"),
       `${JSON.stringify({
-        name: "@elizaos/plugin-shadow",
-        elizaos: {
-          scripts: {
-            paperStatus: {
-              executionSurface: { readiness: "src/a.ts", index: "src/b.ts" },
-            },
-          },
-        },
+        name: "@elizaos/plugin-paper-trading",
+        elizaos: { scripts: { paperStatus: true } },
       })}\n`,
     );
 
     const result = inspectExecutionSurface(root);
 
-    expect(result.liveExecution).toBe("unknown");
-    expect(result.findings[0]).toContain(
-      "expected exactly one workspace to declare",
-    );
+    expect(result.liveExecution).toBe(false);
+    expect(result.findings).toEqual([]);
   });
 
-  test("fails closed on malformed package-owned surface metadata", async () => {
+  test("fails closed when the canonical package disables its marker", async () => {
     const root = await executionFixture();
     await writeFile(
       join(root, "plugins", "plugin-paper-trading", "package.json"),
       `${JSON.stringify({
         name: "@elizaos/plugin-paper-trading",
-        elizaos: { scripts: { paperStatus: {} } },
+        exports: { ".": { "eliza-source": { import: "./src/index.ts" } } },
+        elizaos: { scripts: { paperStatus: false } },
       })}\n`,
     );
 
     const result = inspectExecutionSurface(root);
 
     expect(result.liveExecution).toBe("unknown");
-    expect(result.findings[0]).toContain("malformed");
+    expect(result.findings[0]).toContain("paperStatus=true");
+  });
+
+  test("cannot redirect inspection away from the canonical public source", async () => {
+    const root = await executionFixture();
+    await writeFile(
+      join(root, "plugins", "plugin-paper-trading", "src", "decoy.ts"),
+      "export class NoOpExecutionAdapter {}\n",
+    );
+    await writeFile(
+      join(root, "plugins", "plugin-paper-trading", "package.json"),
+      `${JSON.stringify({
+        name: "@elizaos/plugin-paper-trading",
+        exports: { ".": { "eliza-source": { import: "./src/decoy.ts" } } },
+        elizaos: { scripts: { paperStatus: true } },
+      })}\n`,
+    );
+
+    const result = inspectExecutionSurface(root);
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings[0]).toContain("must bind");
+  });
+
+  test("detects live markers in the canonical public source despite a decoy file", async () => {
+    const root = await executionFixture({
+      index:
+        'export { NoOpExecutionAdapter } from "./launch-readiness.js";\nexport const placeOrder = () => {};\n',
+    });
+    await writeFile(
+      join(root, "plugins", "plugin-paper-trading", "src", "decoy.ts"),
+      "export class NoOpExecutionAdapter {}\n",
+    );
+
+    const result = inspectExecutionSurface(root);
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings).toContain(
+      'Possible live-execution call site "placeOrder" found in the paper-trading surface.',
+    );
+  });
+
+  test("ignores commented decoy exports and inspects the fixed readiness source", async () => {
+    const root = await executionFixture({
+      readiness:
+        "export class NoOpExecutionAdapter {}\nexport const placeOrder = () => {};\n",
+      index:
+        '// export { NoOpExecutionAdapter } from "./decoy.js";\nexport { NoOpExecutionAdapter } from "./launch-readiness.js";\n',
+    });
+    await writeFile(
+      join(root, "plugins", "plugin-paper-trading", "src", "decoy.ts"),
+      "export class NoOpExecutionAdapter {}\n",
+    );
+
+    const result = inspectExecutionSurface(root);
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings).toContain(
+      'Possible live-execution call site "placeOrder" found in the paper-trading surface.',
+    );
+  });
+
+  test.each([
+    'export type { NoOpExecutionAdapter } from "./launch-readiness.js";\n',
+    'export { type NoOpExecutionAdapter } from "./launch-readiness.js";\n',
+    'export { NoOpExecutionAdapter as Renamed } from "./launch-readiness.js";\n',
+    'export { Renamed as NoOpExecutionAdapter } from "./launch-readiness.js";\n',
+  ])("rejects non-runtime or aliased no-op export: %s", async (index) => {
+    const result = inspectExecutionSurface(await executionFixture({ index }));
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings[0]).toContain("directly re-exported exactly once");
+  });
+
+  test("binds the source hash to canonical metadata and both inspected sources", async () => {
+    const root = await executionFixture();
+    const initial = inspectExecutionSurface(root);
+    await writeFile(
+      join(root, "plugins", "plugin-paper-trading", "src", "index.ts"),
+      '// harmless public-source change\nexport { NoOpExecutionAdapter } from "./launch-readiness.js";\n',
+    );
+    const indexChanged = inspectExecutionSurface(root);
+    await writeFile(
+      join(
+        root,
+        "plugins",
+        "plugin-paper-trading",
+        "src",
+        "launch-readiness.ts",
+      ),
+      "// harmless readiness change\nexport class NoOpExecutionAdapter {}\n",
+    );
+    const readinessChanged = inspectExecutionSurface(root);
+
+    expect(indexChanged.sourceHash).not.toBe(initial.sourceHash);
+    expect(readinessChanged.sourceHash).not.toBe(indexChanged.sourceHash);
   });
 });

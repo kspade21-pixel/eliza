@@ -20,13 +20,19 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
+import ts from "typescript";
 import { assertContainedRegularFile } from "./lib/repository-file-integrity.mjs";
-import { listPackages } from "./lib/workspaces.mjs";
 
 const SCHEMA = "eliza-paper-status/1";
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const NO_OP_ADAPTER = "NoOpExecutionAdapter";
+const PAPER_PACKAGE_NAME = "@elizaos/plugin-paper-trading";
+const PAPER_PACKAGE_DIR = "plugins/plugin-paper-trading";
+const CANONICAL_SOURCE_ENTRY = "./src/index.ts";
+const CANONICAL_READINESS_EXPORT = "./launch-readiness.js";
+const CANONICAL_READINESS_SOURCE = "src/launch-readiness.ts";
+export const PAPER_STATUS_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 export const REQUIRED_PAPER_LANES = Object.freeze([
   "install",
   "build-core",
@@ -110,30 +116,37 @@ export function inspectExecutionSurface(repoRoot = REPO_ROOT) {
   const findings = [];
   let declaration;
   try {
-    const declared = listPackages({ repoRoot }).filter((pkg) =>
-      Object.hasOwn(pkg.packageJson.elizaos?.scripts ?? {}, "paperStatus"),
+    const manifestPath = `${PAPER_PACKAGE_DIR}/package.json`;
+    const manifest = JSON.parse(
+      readFileSync(
+        assertContainedRegularFile(
+          repoRoot,
+          manifestPath,
+          "canonical paper package manifest",
+        ).absolute,
+        "utf8",
+      ),
     );
-    if (declared.length !== 1) {
+    if (manifest.name !== PAPER_PACKAGE_NAME) {
+      throw new Error(`${manifestPath} must identify ${PAPER_PACKAGE_NAME}`);
+    }
+    if (manifest.elizaos?.scripts?.paperStatus !== true) {
       throw new Error(
-        `expected exactly one workspace to declare elizaos.scripts.paperStatus, found ${declared.length}`,
+        `${manifestPath} must declare elizaos.scripts.paperStatus=true`,
       );
     }
-    const pkg = declared[0];
-    const surface =
-      pkg.packageJson.elizaos.scripts.paperStatus?.executionSurface;
-    if (
-      !surface ||
-      typeof surface !== "object" ||
-      typeof surface.readiness !== "string" ||
-      typeof surface.index !== "string"
-    ) {
+    const sourceEntry = manifest.exports?.["."]?.["eliza-source"]?.import;
+    if (sourceEntry !== CANONICAL_SOURCE_ENTRY) {
       throw new Error(
-        `${pkg.dir}/package.json has malformed elizaos.scripts.paperStatus.executionSurface metadata`,
+        `${manifestPath} must bind exports["."].eliza-source.import to ${CANONICAL_SOURCE_ENTRY}`,
       );
     }
     declaration = {
-      readiness: `${pkg.dir}/${surface.readiness}`,
-      index: `${pkg.dir}/${surface.index}`,
+      package: manifest.name,
+      packageDir: PAPER_PACKAGE_DIR,
+      paperStatus: true,
+      sourceEntry,
+      index: `${PAPER_PACKAGE_DIR}/${CANONICAL_SOURCE_ENTRY.slice(2)}`,
     };
   } catch (cause) {
     return {
@@ -144,6 +157,89 @@ export function inspectExecutionSurface(repoRoot = REPO_ROOT) {
       ],
     };
   }
+
+  let index;
+  try {
+    index = readFileSync(
+      assertContainedRegularFile(
+        repoRoot,
+        declaration.index,
+        "paper execution public source",
+      ).absolute,
+      "utf8",
+    );
+  } catch (cause) {
+    return {
+      adapter: "unreadable",
+      liveExecution: "unknown",
+      findings: [`Could not read ${declaration.index}: ${cause.message}`],
+    };
+  }
+
+  for (const marker of LIVE_EXECUTION_MARKERS) {
+    if (index.includes(marker)) {
+      findings.push(
+        `Possible live-execution call site "${marker}" found in the paper-trading surface.`,
+      );
+    }
+  }
+
+  const sourceFile = ts.createSourceFile(
+    declaration.index,
+    index,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const noOpReExports = sourceFile.statements.filter(
+    (statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === CANONICAL_READINESS_EXPORT &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause) &&
+      statement.exportClause.elements.some(
+        (element) =>
+          !element.isTypeOnly &&
+          element.propertyName === undefined &&
+          element.name.text === NO_OP_ADAPTER,
+      ),
+  );
+  const sourceHash = (readiness) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          declaration,
+          index: { path: declaration.index, source: index },
+          ...(readiness === undefined
+            ? {}
+            : {
+                readiness: {
+                  path: declaration.readiness,
+                  source: readiness,
+                },
+              }),
+        }),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  if (noOpReExports.length !== 1) {
+    findings.push(
+      `${NO_OP_ADAPTER} must be directly re-exported exactly once from ${CANONICAL_READINESS_EXPORT} by canonical source ${declaration.index}.`,
+    );
+    return {
+      adapter: "unknown",
+      liveExecution: "unknown",
+      sourceHash: sourceHash(),
+      findings,
+    };
+  }
+
+  declaration.readiness = posix.join(
+    declaration.packageDir,
+    CANONICAL_READINESS_SOURCE,
+  );
 
   let readiness;
   try {
@@ -172,22 +268,8 @@ export function inspectExecutionSurface(repoRoot = REPO_ROOT) {
     );
   }
 
-  let index = "";
-  try {
-    index = readFileSync(
-      assertContainedRegularFile(
-        repoRoot,
-        declaration.index,
-        "paper execution index source",
-      ).absolute,
-      "utf8",
-    );
-  } catch (cause) {
-    findings.push(`Could not read ${declaration.index}: ${cause.message}`);
-  }
-
   for (const marker of LIVE_EXECUTION_MARKERS) {
-    if (readiness.includes(marker) || index.includes(marker)) {
+    if (readiness.includes(marker)) {
       findings.push(
         `Possible live-execution call site "${marker}" found in the paper-trading surface.`,
       );
@@ -197,10 +279,7 @@ export function inspectExecutionSurface(repoRoot = REPO_ROOT) {
   return {
     adapter: hasNoOpAdapter ? NO_OP_ADAPTER : "unknown",
     liveExecution: findings.length === 0 ? false : "unknown",
-    sourceHash: createHash("sha256")
-      .update(readiness)
-      .digest("hex")
-      .slice(0, 16),
+    sourceHash: sourceHash(readiness),
     findings,
   };
 }
@@ -246,6 +325,10 @@ export function buildPaperStatusRecord({
   execution,
   generatedAt = new Date().toISOString(),
 }) {
+  const generatedAtMs = Date.parse(generatedAt);
+  if (!Number.isFinite(generatedAtMs)) {
+    throw new Error(`Invalid generatedAt timestamp: ${generatedAt}`);
+  }
   const laneIntegrity = assessPaperLanes(lanes);
 
   const failed = lanes.filter((lane) => lane.status === "fail");
@@ -262,6 +345,7 @@ export function buildPaperStatusRecord({
   return {
     schema: SCHEMA,
     generatedAt,
+    validUntil: new Date(generatedAtMs + PAPER_STATUS_MAX_AGE_MS).toISOString(),
     overall,
     repository: repo,
     ref: identity.ref,

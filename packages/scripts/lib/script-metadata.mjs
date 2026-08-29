@@ -56,11 +56,9 @@
  *     clone. `sentinel` is the dist file whose presence proves it is already
  *     built; `order` is the ascending build order (deps before dependents).
  *
- *   paperStatus: {
- *     executionSurface: { readiness: string, index: string }
- *   }
- *     Package-owned source paths whose no-op boundary paper-status.mjs audits.
- *     Exactly one workspace may declare this metadata.
+ *   paperStatus: true
+ *     Marks the canonical paper-only package whose public source export and
+ *     no-op re-export paper-status.mjs binds and audits independently.
  */
 
 import { listPackages } from "./workspaces.mjs";

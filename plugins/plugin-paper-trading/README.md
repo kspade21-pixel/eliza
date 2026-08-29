@@ -56,7 +56,12 @@ duplicate, failed, or unexpected lane makes the record red. The record also
 fails closed if the exported `NoOpExecutionAdapter` paper-only boundary cannot
 be verified. PR Static Smoke owns automatic pull-request validation and runs
 the status contract; Develop Full remains the sole automatic post-merge
-authority.
+authority. Its durable effect ledger dispatches the status run exactly once for
+the verified `develop` SHA and can rediscover an interrupted dispatch without
+redelivery. Publication rechecks the branch tip immediately before writing.
+Polling consumers must still reject a record whose top-level `validUntil`
+timestamp is missing or expired, or whose `commit` is not the current
+`refs/heads/develop` SHA, even if `overall` is still `green`.
 
 ## Chat runtime integration
 

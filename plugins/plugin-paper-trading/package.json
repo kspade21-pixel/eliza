@@ -6,12 +6,7 @@
   "description": "Wallet-free deterministic paper-trading simulator for elizaOS.",
   "elizaos": {
     "scripts": {
-      "paperStatus": {
-        "executionSurface": {
-          "readiness": "src/launch-readiness.ts",
-          "index": "src/index.ts"
-        }
-      }
+      "paperStatus": true
     }
   },
   "main": "./dist/index.js",

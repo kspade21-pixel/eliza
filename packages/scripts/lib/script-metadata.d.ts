@@ -36,15 +36,8 @@ export interface ScriptMetadata {
     /** Ascending build order — deps before dependents. */
     order: number;
   };
-  /** Package-owned source paths audited by the paper-status safety record. */
-  paperStatus?: {
-    executionSurface: {
-      /** Source that exports the no-op execution adapter. */
-      readiness: string;
-      /** Public source surface checked for live-order call sites. */
-      index: string;
-    };
-  };
+  /** Canonical paper-only package audited by the paper-status safety record. */
+  paperStatus?: true;
 }
 
 export interface BuildOnInstallPackage {
