@@ -1,0 +1,40 @@
+{
+  "schema": "eliza-paper-status/1",
+  "generatedAt": "2026-08-29T07:06:47.699Z",
+  "overall": "green",
+  "repository": "kspade21-pixel/eliza",
+  "ref": "develop",
+  "commit": "8f2fe2121182181fafe663276556552a4383ecff",
+  "runId": "33239894663",
+  "runUrl": "https://github.com/kspade21-pixel/eliza/actions/runs/33239894663",
+  "lanes": [
+    {
+      "name": "install",
+      "status": "pass"
+    },
+    {
+      "name": "build-core",
+      "status": "pass"
+    },
+    {
+      "name": "paper-typecheck",
+      "status": "pass"
+    },
+    {
+      "name": "paper-tests",
+      "status": "pass"
+    },
+    {
+      "name": "sdk-routes",
+      "status": "pass"
+    }
+  ],
+  "failingLanes": [],
+  "execution": {
+    "mode": "paper-only",
+    "adapter": "NoOpExecutionAdapter",
+    "liveExecution": false,
+    "sourceHash": "d591648cf2633f2c",
+    "findings": []
+  }
+}
