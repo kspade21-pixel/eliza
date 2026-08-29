@@ -185,7 +185,15 @@ for (const routeFile of routeFiles) {
     : segments.flatMap((segment) =>
         segment.paramName && segment.catchAll ? [segment.paramName] : [],
       );
-  const file = path.relative(cloudRoot, routeFile.fullPath);
+  // The emitted `file` is a repository-relative locator that route-discovery
+  // tests resolve with existsSync, so it has to be POSIX regardless of who
+  // generated it. path.relative yields backslashes on Windows, which resolve
+  // there and fail everywhere else — a file generated on Windows would pass
+  // locally and break CI on every Linux runner.
+  const file = path
+    .relative(cloudRoot, routeFile.fullPath)
+    .split(path.sep)
+    .join("/");
 
   for (const method of methods) {
     const methodName = methodNameFor(method, route, usedNames);
