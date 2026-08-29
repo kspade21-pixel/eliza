@@ -1,21 +1,12 @@
-# Unattended nightly run of the deterministic paper-trading lane, publishing a
+# Manually dispatched run of the deterministic paper-trading lane, publishing a
 # machine-readable status record for external agents.
 #
-# The paper suites are reproducible and secret-free, so they are worth running
-# on a clock rather than only on a pull request: drift from a dependency bump,
-# a transitive update, or an upstream merge shows up here before it blocks a
-# merge. Every lane runs to completion even when an earlier one fails, because
-# a status feed reporting one failure and three unknowns is far less useful
-# than one reporting exactly which lanes are red.
-#
-# GitHub disables scheduled workflows in a repository after 60 days without
-# activity. If the nightly stops arriving, that is the first thing to check.
+# Develop Full owns automatic post-merge validation, so this workflow cannot be
+# scheduled independently. Every lane runs to completion even when an earlier
+# one fails because the emitted record must say exactly which lanes are red.
 name: Paper Nightly
 
 on:
-  schedule:
-    # 07:00 UTC — after US market close and before the working day in ET.
-    - cron: "0 7 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -74,6 +65,11 @@ jobs:
         if: always() && steps.build_core.outcome == 'success'
         run: bun run --cwd plugins/plugin-paper-trading test
 
+      - name: Test paper status contract
+        id: status_contract
+        if: always() && steps.install.outcome == 'success'
+        run: bun test packages/scripts/__tests__/paper-status.test.ts
+
       - name: Cloud SDK route coverage
         id: sdk_routes
         if: always() && steps.install.outcome == 'success'
@@ -94,6 +90,7 @@ jobs:
             --lane=build-core=${{ steps.build_core.outcome == 'success' && 'pass' || 'fail' }} \
             --lane=paper-typecheck=${{ steps.paper_typecheck.outcome == 'success' && 'pass' || steps.paper_typecheck.outcome == 'skipped' && 'skip' || 'fail' }} \
             --lane=paper-tests=${{ steps.paper_tests.outcome == 'success' && 'pass' || steps.paper_tests.outcome == 'skipped' && 'skip' || 'fail' }} \
+            --lane=status-contract=${{ steps.status_contract.outcome == 'success' && 'pass' || steps.status_contract.outcome == 'skipped' && 'skip' || 'fail' }} \
             --lane=sdk-routes=${{ steps.sdk_routes.outcome == 'success' && 'pass' || steps.sdk_routes.outcome == 'skipped' && 'skip' || 'fail' }}
           overall="$(node -e 'process.stdout.write(require("./paper-status.json").overall)')"
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
