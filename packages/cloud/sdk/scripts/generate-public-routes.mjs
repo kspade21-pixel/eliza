@@ -185,7 +185,15 @@ for (const routeFile of routeFiles) {
     : segments.flatMap((segment) =>
         segment.paramName && segment.catchAll ? [segment.paramName] : [],
       );
-  const file = path.relative(cloudRoot, routeFile.fullPath);
+  // The emitted `file` is a repository-relative locator that route-discovery
+  // tests resolve with existsSync, so it has to be POSIX regardless of who
+  // generated it. path.relative yields backslashes on Windows, which resolve
+  // there and fail everywhere else — a file generated on Windows would pass
+  // locally and break CI on every Linux runner.
+  const file = path
+    .relative(cloudRoot, routeFile.fullPath)
+    .split(path.sep)
+    .join("/");
 
   for (const method of methods) {
     const methodName = methodNameFor(method, route, usedNames);
@@ -384,12 +392,22 @@ const outputPath = await firstExistingPath([
   path.join(cloudRoot, "packages", "cloud", "sdk", "src", "public-routes.ts"),
   path.join(cloudRoot, "packages", "sdk", "src", "public-routes.ts"),
 ]);
-const biomeBin = path.join(
-  cloudRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "biome.cmd" : "biome",
+// Package managers write different Windows shims: bun produces `biome.exe`,
+// npm and pnpm produce `biome.cmd`. This repository pins bun, so hardcoding
+// `.cmd` left every Windows contributor on the mandated toolchain unable to
+// run this generator at all — which is how the wrappers drift out of sync
+// with the route tree in the first place. Prefer whichever shim exists.
+const biomeBin = await firstExistingPath(
+  process.platform === "win32"
+    ? [
+        path.join(cloudRoot, "node_modules", ".bin", "biome.exe"),
+        path.join(cloudRoot, "node_modules", ".bin", "biome.cmd"),
+      ]
+    : [path.join(cloudRoot, "node_modules", ".bin", "biome")],
 );
+// Node refuses to spawn a `.cmd` without a shell (CVE-2024-27980 hardening)
+// and reports it as EINVAL with an undefined stderr, so route that case
+// through the shell while leaving the `.exe` and POSIX paths direct.
 const formatResult = spawnSync(
   biomeBin,
   ["format", "--stdin-file-path", outputPath],
@@ -397,6 +415,7 @@ const formatResult = spawnSync(
     input: source,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
+    shell: biomeBin.endsWith(".cmd"),
   },
 );
 

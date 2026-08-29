@@ -394,6 +394,15 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/twilio/disconnect/route.ts",
   },
+  "DELETE /api/v1/twilio/voice/calls/{callSid}": {
+    method: "DELETE",
+    path: "/api/v1/twilio/voice/calls/{callSid}",
+    methodName: "deleteApiV1TwilioVoiceCallsByCallSid",
+    responseMode: "json",
+    pathParams: ["callSid"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/twilio/voice/calls/[callSid]/route.ts",
+  },
   "DELETE /api/v1/twitter/disconnect": {
     method: "DELETE",
     path: "/api/v1/twitter/disconnect",
@@ -2196,6 +2205,15 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/referrals/route.ts",
   },
+  "GET /api/v1/remote/hosts": {
+    method: "GET",
+    path: "/api/v1/remote/hosts",
+    methodName: "getApiV1RemoteHosts",
+    responseMode: "json",
+    pathParams: [],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/hosts/route.ts",
+  },
   "GET /api/v1/remote/sessions": {
     method: "GET",
     path: "/api/v1/remote/sessions",
@@ -2204,6 +2222,24 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     pathParams: [],
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/remote/sessions/route.ts",
+  },
+  "GET /api/v1/remote/sessions/{id}/commands": {
+    method: "GET",
+    path: "/api/v1/remote/sessions/{id}/commands",
+    methodName: "getApiV1RemoteSessionsByIdCommands",
+    responseMode: "json",
+    pathParams: ["id"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/commands/route.ts",
+  },
+  "GET /api/v1/remote/sessions/{id}/commands/{commandId}": {
+    method: "GET",
+    path: "/api/v1/remote/sessions/{id}/commands/{commandId}",
+    methodName: "getApiV1RemoteSessionsByIdCommandsByCommandId",
+    responseMode: "json",
+    pathParams: ["id", "commandId"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/commands/[commandId]/route.ts",
   },
   "GET /api/v1/sensitive-requests/{id}": {
     method: "GET",
@@ -2312,6 +2348,15 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     pathParams: [],
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/twilio/status/route.ts",
+  },
+  "GET /api/v1/twilio/voice/calls/{callSid}": {
+    method: "GET",
+    path: "/api/v1/twilio/voice/calls/{callSid}",
+    methodName: "getApiV1TwilioVoiceCallsByCallSid",
+    responseMode: "json",
+    pathParams: ["callSid"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/twilio/voice/calls/[callSid]/route.ts",
   },
   "GET /api/v1/twilio/voice/media": {
     method: "GET",
@@ -4397,6 +4442,24 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/referrals/apply/route.ts",
   },
+  "POST /api/v1/remote/hosts": {
+    method: "POST",
+    path: "/api/v1/remote/hosts",
+    methodName: "postApiV1RemoteHosts",
+    responseMode: "json",
+    pathParams: [],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/hosts/route.ts",
+  },
+  "POST /api/v1/remote/hosts/{id}/revoke": {
+    method: "POST",
+    path: "/api/v1/remote/hosts/{id}/revoke",
+    methodName: "postApiV1RemoteHostsByIdRevoke",
+    responseMode: "json",
+    pathParams: ["id"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/hosts/[id]/revoke/route.ts",
+  },
   "POST /api/v1/remote/pair": {
     method: "POST",
     path: "/api/v1/remote/pair",
@@ -4405,6 +4468,42 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     pathParams: [],
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/remote/pair/route.ts",
+  },
+  "POST /api/v1/remote/sessions/{id}/activate": {
+    method: "POST",
+    path: "/api/v1/remote/sessions/{id}/activate",
+    methodName: "postApiV1RemoteSessionsByIdActivate",
+    responseMode: "json",
+    pathParams: ["id"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/activate/route.ts",
+  },
+  "POST /api/v1/remote/sessions/{id}/commands": {
+    method: "POST",
+    path: "/api/v1/remote/sessions/{id}/commands",
+    methodName: "postApiV1RemoteSessionsByIdCommands",
+    responseMode: "json",
+    pathParams: ["id"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/commands/route.ts",
+  },
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete": {
+    method: "POST",
+    path: "/api/v1/remote/sessions/{id}/commands/{commandId}/complete",
+    methodName: "postApiV1RemoteSessionsByIdCommandsByCommandIdComplete",
+    responseMode: "json",
+    pathParams: ["id", "commandId"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/commands/[commandId]/complete/route.ts",
+  },
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/start": {
+    method: "POST",
+    path: "/api/v1/remote/sessions/{id}/commands/{commandId}/start",
+    methodName: "postApiV1RemoteSessionsByIdCommandsByCommandIdStart",
+    responseMode: "json",
+    pathParams: ["id", "commandId"],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/remote/sessions/[id]/commands/[commandId]/start/route.ts",
   },
   "POST /api/v1/remote/sessions/{id}/revoke": {
     method: "POST",
@@ -4612,6 +4711,15 @@ export const ELIZA_CLOUD_PUBLIC_ENDPOINTS = {
     pathParams: [],
     catchAllPathParams: [],
     file: "packages/cloud/api/v1/twilio/voice/inbound/route.ts",
+  },
+  "POST /api/v1/twilio/voice/status": {
+    method: "POST",
+    path: "/api/v1/twilio/voice/status",
+    methodName: "postApiV1TwilioVoiceStatus",
+    responseMode: "json",
+    pathParams: [],
+    catchAllPathParams: [],
+    file: "packages/cloud/api/v1/twilio/voice/status/route.ts",
   },
   "POST /api/v1/twitter/connect": {
     method: "POST",
@@ -5056,6 +5164,7 @@ export interface PublicRoutePathParams {
   "DELETE /api/v1/sessions/{id}": { id: string | number };
   "DELETE /api/v1/telegram/disconnect": Record<never, never>;
   "DELETE /api/v1/twilio/disconnect": Record<never, never>;
+  "DELETE /api/v1/twilio/voice/calls/{callSid}": { callSid: string | number };
   "DELETE /api/v1/twitter/disconnect": Record<never, never>;
   "DELETE /api/v1/voice/{id}": { id: string | number };
   "DELETE /api/v1/web-push/subscriptions": Record<never, never>;
@@ -5356,7 +5465,13 @@ export interface PublicRoutePathParams {
   "GET /api/v1/redemptions/quote": Record<never, never>;
   "GET /api/v1/redemptions/status": Record<never, never>;
   "GET /api/v1/referrals": Record<never, never>;
+  "GET /api/v1/remote/hosts": Record<never, never>;
   "GET /api/v1/remote/sessions": Record<never, never>;
+  "GET /api/v1/remote/sessions/{id}/commands": { id: string | number };
+  "GET /api/v1/remote/sessions/{id}/commands/{commandId}": {
+    id: string | number;
+    commandId: string | number;
+  };
   "GET /api/v1/sensitive-requests/{id}": { id: string | number };
   "GET /api/v1/sessions": Record<never, never>;
   "GET /api/v1/solana/assets/{address}": { address: string | number };
@@ -5369,6 +5484,7 @@ export interface PublicRoutePathParams {
   "GET /api/v1/telegram/scan-chats": Record<never, never>;
   "GET /api/v1/telegram/status": Record<never, never>;
   "GET /api/v1/twilio/status": Record<never, never>;
+  "GET /api/v1/twilio/voice/calls/{callSid}": { callSid: string | number };
   "GET /api/v1/twilio/voice/media": Record<never, never>;
   "GET /api/v1/twitter/callback": Record<never, never>;
   "GET /api/v1/twitter/status": Record<never, never>;
@@ -5686,7 +5802,19 @@ export interface PublicRoutePathParams {
   "POST /api/v1/proxy/solana-rpc": Record<never, never>;
   "POST /api/v1/redemptions": Record<never, never>;
   "POST /api/v1/referrals/apply": Record<never, never>;
+  "POST /api/v1/remote/hosts": Record<never, never>;
+  "POST /api/v1/remote/hosts/{id}/revoke": { id: string | number };
   "POST /api/v1/remote/pair": Record<never, never>;
+  "POST /api/v1/remote/sessions/{id}/activate": { id: string | number };
+  "POST /api/v1/remote/sessions/{id}/commands": { id: string | number };
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete": {
+    id: string | number;
+    commandId: string | number;
+  };
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/start": {
+    id: string | number;
+    commandId: string | number;
+  };
   "POST /api/v1/remote/sessions/{id}/revoke": { id: string | number };
   "POST /api/v1/reports/bug": Record<never, never>;
   "POST /api/v1/responses": Record<never, never>;
@@ -5710,6 +5838,7 @@ export interface PublicRoutePathParams {
   "POST /api/v1/twilio/disconnect": Record<never, never>;
   "POST /api/v1/twilio/voice/calls": Record<never, never>;
   "POST /api/v1/twilio/voice/inbound": Record<never, never>;
+  "POST /api/v1/twilio/voice/status": Record<never, never>;
   "POST /api/v1/twitter/connect": Record<never, never>;
   "POST /api/v1/twitter/personal-message": Record<never, never>;
   "POST /api/v1/user/avatar": Record<never, never>;
@@ -5812,6 +5941,7 @@ export interface PublicRouteHeaders {
   "DELETE /api/v1/sessions/{id}": never;
   "DELETE /api/v1/telegram/disconnect": never;
   "DELETE /api/v1/twilio/disconnect": never;
+  "DELETE /api/v1/twilio/voice/calls/{callSid}": never;
   "DELETE /api/v1/twitter/disconnect": never;
   "DELETE /api/v1/voice/{id}": never;
   "DELETE /api/v1/web-push/subscriptions": never;
@@ -6020,7 +6150,10 @@ export interface PublicRouteHeaders {
   "GET /api/v1/redemptions/quote": never;
   "GET /api/v1/redemptions/status": never;
   "GET /api/v1/referrals": never;
+  "GET /api/v1/remote/hosts": never;
   "GET /api/v1/remote/sessions": never;
+  "GET /api/v1/remote/sessions/{id}/commands": never;
+  "GET /api/v1/remote/sessions/{id}/commands/{commandId}": never;
   "GET /api/v1/sensitive-requests/{id}": never;
   "GET /api/v1/sessions": never;
   "GET /api/v1/solana/assets/{address}": never;
@@ -6033,6 +6166,7 @@ export interface PublicRouteHeaders {
   "GET /api/v1/telegram/scan-chats": never;
   "GET /api/v1/telegram/status": never;
   "GET /api/v1/twilio/status": never;
+  "GET /api/v1/twilio/voice/calls/{callSid}": never;
   "GET /api/v1/twilio/voice/media": never;
   "GET /api/v1/twitter/callback": never;
   "GET /api/v1/twitter/status": never;
@@ -6272,7 +6406,13 @@ export interface PublicRouteHeaders {
   "POST /api/v1/proxy/solana-rpc": never;
   "POST /api/v1/redemptions": never;
   "POST /api/v1/referrals/apply": never;
+  "POST /api/v1/remote/hosts": never;
+  "POST /api/v1/remote/hosts/{id}/revoke": never;
   "POST /api/v1/remote/pair": never;
+  "POST /api/v1/remote/sessions/{id}/activate": never;
+  "POST /api/v1/remote/sessions/{id}/commands": never;
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete": never;
+  "POST /api/v1/remote/sessions/{id}/commands/{commandId}/start": never;
   "POST /api/v1/remote/sessions/{id}/revoke": never;
   "POST /api/v1/reports/bug": never;
   "POST /api/v1/responses": never;
@@ -6296,6 +6436,7 @@ export interface PublicRouteHeaders {
   "POST /api/v1/twilio/disconnect": never;
   "POST /api/v1/twilio/voice/calls": never;
   "POST /api/v1/twilio/voice/inbound": never;
+  "POST /api/v1/twilio/voice/status": never;
   "POST /api/v1/twitter/connect": never;
   "POST /api/v1/twitter/personal-message": never;
   "POST /api/v1/user/avatar": never;
@@ -6874,6 +7015,15 @@ export class ElizaCloudPublicRoutesClient {
   ): Promise<TResponse> {
     return this.call<"DELETE /api/v1/twilio/disconnect", TResponse>(
       "DELETE /api/v1/twilio/disconnect",
+      options,
+    );
+  }
+
+  deleteApiV1TwilioVoiceCallsByCallSid<TResponse = unknown>(
+    options: PublicRouteCallOptions<"DELETE /api/v1/twilio/voice/calls/{callSid}">,
+  ): Promise<TResponse> {
+    return this.call<"DELETE /api/v1/twilio/voice/calls/{callSid}", TResponse>(
+      "DELETE /api/v1/twilio/voice/calls/{callSid}",
       options,
     );
   }
@@ -8683,6 +8833,15 @@ export class ElizaCloudPublicRoutesClient {
     );
   }
 
+  getApiV1RemoteHosts<TResponse = unknown>(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/hosts"> = {},
+  ): Promise<TResponse> {
+    return this.call<"GET /api/v1/remote/hosts", TResponse>(
+      "GET /api/v1/remote/hosts",
+      options,
+    );
+  }
+
   getApiV1RemoteSessions<TResponse = unknown>(
     options: PublicRouteCallOptions<"GET /api/v1/remote/sessions"> = {},
   ): Promise<TResponse> {
@@ -8690,6 +8849,24 @@ export class ElizaCloudPublicRoutesClient {
       "GET /api/v1/remote/sessions",
       options,
     );
+  }
+
+  getApiV1RemoteSessionsByIdCommands<TResponse = unknown>(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/sessions/{id}/commands">,
+  ): Promise<TResponse> {
+    return this.call<"GET /api/v1/remote/sessions/{id}/commands", TResponse>(
+      "GET /api/v1/remote/sessions/{id}/commands",
+      options,
+    );
+  }
+
+  getApiV1RemoteSessionsByIdCommandsByCommandId<TResponse = unknown>(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/sessions/{id}/commands/{commandId}">,
+  ): Promise<TResponse> {
+    return this.call<
+      "GET /api/v1/remote/sessions/{id}/commands/{commandId}",
+      TResponse
+    >("GET /api/v1/remote/sessions/{id}/commands/{commandId}", options);
   }
 
   getApiV1SensitiveRequestsById<TResponse = unknown>(
@@ -8796,6 +8973,15 @@ export class ElizaCloudPublicRoutesClient {
   ): Promise<TResponse> {
     return this.call<"GET /api/v1/twilio/status", TResponse>(
       "GET /api/v1/twilio/status",
+      options,
+    );
+  }
+
+  getApiV1TwilioVoiceCallsByCallSid<TResponse = unknown>(
+    options: PublicRouteCallOptions<"GET /api/v1/twilio/voice/calls/{callSid}">,
+  ): Promise<TResponse> {
+    return this.call<"GET /api/v1/twilio/voice/calls/{callSid}", TResponse>(
+      "GET /api/v1/twilio/voice/calls/{callSid}",
       options,
     );
   }
@@ -10906,6 +11092,24 @@ export class ElizaCloudPublicRoutesClient {
     );
   }
 
+  postApiV1RemoteHosts<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/hosts"> = {},
+  ): Promise<TResponse> {
+    return this.call<"POST /api/v1/remote/hosts", TResponse>(
+      "POST /api/v1/remote/hosts",
+      options,
+    );
+  }
+
+  postApiV1RemoteHostsByIdRevoke<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/hosts/{id}/revoke">,
+  ): Promise<TResponse> {
+    return this.call<"POST /api/v1/remote/hosts/{id}/revoke", TResponse>(
+      "POST /api/v1/remote/hosts/{id}/revoke",
+      options,
+    );
+  }
+
   postApiV1RemotePair<TResponse = unknown>(
     options: PublicRouteCallOptions<"POST /api/v1/remote/pair"> = {},
   ): Promise<TResponse> {
@@ -10913,6 +11117,45 @@ export class ElizaCloudPublicRoutesClient {
       "POST /api/v1/remote/pair",
       options,
     );
+  }
+
+  postApiV1RemoteSessionsByIdActivate<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/activate">,
+  ): Promise<TResponse> {
+    return this.call<"POST /api/v1/remote/sessions/{id}/activate", TResponse>(
+      "POST /api/v1/remote/sessions/{id}/activate",
+      options,
+    );
+  }
+
+  postApiV1RemoteSessionsByIdCommands<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands">,
+  ): Promise<TResponse> {
+    return this.call<"POST /api/v1/remote/sessions/{id}/commands", TResponse>(
+      "POST /api/v1/remote/sessions/{id}/commands",
+      options,
+    );
+  }
+
+  postApiV1RemoteSessionsByIdCommandsByCommandIdComplete<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete">,
+  ): Promise<TResponse> {
+    return this.call<
+      "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete",
+      TResponse
+    >(
+      "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete",
+      options,
+    );
+  }
+
+  postApiV1RemoteSessionsByIdCommandsByCommandIdStart<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands/{commandId}/start">,
+  ): Promise<TResponse> {
+    return this.call<
+      "POST /api/v1/remote/sessions/{id}/commands/{commandId}/start",
+      TResponse
+    >("POST /api/v1/remote/sessions/{id}/commands/{commandId}/start", options);
   }
 
   postApiV1RemoteSessionsByIdRevoke<TResponse = unknown>(
@@ -11118,6 +11361,15 @@ export class ElizaCloudPublicRoutesClient {
   ): Promise<TResponse> {
     return this.call<"POST /api/v1/twilio/voice/inbound", TResponse>(
       "POST /api/v1/twilio/voice/inbound",
+      options,
+    );
+  }
+
+  postApiV1TwilioVoiceStatus<TResponse = unknown>(
+    options: PublicRouteCallOptions<"POST /api/v1/twilio/voice/status"> = {},
+  ): Promise<TResponse> {
+    return this.call<"POST /api/v1/twilio/voice/status", TResponse>(
+      "POST /api/v1/twilio/voice/status",
       options,
     );
   }
@@ -11765,6 +12017,12 @@ export class ElizaCloudPublicRoutesClient {
     options: PublicRouteCallOptions<"DELETE /api/v1/twilio/disconnect"> = {},
   ): Promise<Response> {
     return this.callRaw("DELETE /api/v1/twilio/disconnect", options);
+  }
+
+  deleteApiV1TwilioVoiceCallsByCallSidRaw(
+    options: PublicRouteCallOptions<"DELETE /api/v1/twilio/voice/calls/{callSid}">,
+  ): Promise<Response> {
+    return this.callRaw("DELETE /api/v1/twilio/voice/calls/{callSid}", options);
   }
 
   deleteApiV1TwitterDisconnectRaw(
@@ -13072,10 +13330,31 @@ export class ElizaCloudPublicRoutesClient {
     return this.callRaw("GET /api/v1/referrals", options);
   }
 
+  getApiV1RemoteHostsRaw(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/hosts"> = {},
+  ): Promise<Response> {
+    return this.callRaw("GET /api/v1/remote/hosts", options);
+  }
+
   getApiV1RemoteSessionsRaw(
     options: PublicRouteCallOptions<"GET /api/v1/remote/sessions"> = {},
   ): Promise<Response> {
     return this.callRaw("GET /api/v1/remote/sessions", options);
+  }
+
+  getApiV1RemoteSessionsByIdCommandsRaw(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/sessions/{id}/commands">,
+  ): Promise<Response> {
+    return this.callRaw("GET /api/v1/remote/sessions/{id}/commands", options);
+  }
+
+  getApiV1RemoteSessionsByIdCommandsByCommandIdRaw(
+    options: PublicRouteCallOptions<"GET /api/v1/remote/sessions/{id}/commands/{commandId}">,
+  ): Promise<Response> {
+    return this.callRaw(
+      "GET /api/v1/remote/sessions/{id}/commands/{commandId}",
+      options,
+    );
   }
 
   getApiV1SensitiveRequestsByIdRaw(
@@ -13148,6 +13427,12 @@ export class ElizaCloudPublicRoutesClient {
     options: PublicRouteCallOptions<"GET /api/v1/twilio/status"> = {},
   ): Promise<Response> {
     return this.callRaw("GET /api/v1/twilio/status", options);
+  }
+
+  getApiV1TwilioVoiceCallsByCallSidRaw(
+    options: PublicRouteCallOptions<"GET /api/v1/twilio/voice/calls/{callSid}">,
+  ): Promise<Response> {
+    return this.callRaw("GET /api/v1/twilio/voice/calls/{callSid}", options);
   }
 
   getApiV1TwilioVoiceMediaRaw(
@@ -14686,10 +14971,52 @@ export class ElizaCloudPublicRoutesClient {
     return this.callRaw("POST /api/v1/referrals/apply", options);
   }
 
+  postApiV1RemoteHostsRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/hosts"> = {},
+  ): Promise<Response> {
+    return this.callRaw("POST /api/v1/remote/hosts", options);
+  }
+
+  postApiV1RemoteHostsByIdRevokeRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/hosts/{id}/revoke">,
+  ): Promise<Response> {
+    return this.callRaw("POST /api/v1/remote/hosts/{id}/revoke", options);
+  }
+
   postApiV1RemotePairRaw(
     options: PublicRouteCallOptions<"POST /api/v1/remote/pair"> = {},
   ): Promise<Response> {
     return this.callRaw("POST /api/v1/remote/pair", options);
+  }
+
+  postApiV1RemoteSessionsByIdActivateRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/activate">,
+  ): Promise<Response> {
+    return this.callRaw("POST /api/v1/remote/sessions/{id}/activate", options);
+  }
+
+  postApiV1RemoteSessionsByIdCommandsRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands">,
+  ): Promise<Response> {
+    return this.callRaw("POST /api/v1/remote/sessions/{id}/commands", options);
+  }
+
+  postApiV1RemoteSessionsByIdCommandsByCommandIdCompleteRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete">,
+  ): Promise<Response> {
+    return this.callRaw(
+      "POST /api/v1/remote/sessions/{id}/commands/{commandId}/complete",
+      options,
+    );
+  }
+
+  postApiV1RemoteSessionsByIdCommandsByCommandIdStartRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/remote/sessions/{id}/commands/{commandId}/start">,
+  ): Promise<Response> {
+    return this.callRaw(
+      "POST /api/v1/remote/sessions/{id}/commands/{commandId}/start",
+      options,
+    );
   }
 
   postApiV1RemoteSessionsByIdRevokeRaw(
@@ -14828,6 +15155,12 @@ export class ElizaCloudPublicRoutesClient {
     options: PublicRouteCallOptions<"POST /api/v1/twilio/voice/inbound"> = {},
   ): Promise<Response> {
     return this.callRaw("POST /api/v1/twilio/voice/inbound", options);
+  }
+
+  postApiV1TwilioVoiceStatusRaw(
+    options: PublicRouteCallOptions<"POST /api/v1/twilio/voice/status"> = {},
+  ): Promise<Response> {
+    return this.callRaw("POST /api/v1/twilio/voice/status", options);
   }
 
   postApiV1TwitterConnectRaw(
