@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Wallet-free deterministic paper-trading simulator for elizaOS.",
+  "elizaos": {
+    "scripts": {
+      "paperStatus": true
+    }
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

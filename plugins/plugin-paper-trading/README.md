@@ -49,6 +49,20 @@ bun run --cwd plugins/plugin-paper-trading typecheck
 bun run --cwd plugins/plugin-paper-trading build
 ```
 
+The manually generated machine-readable health record is green only when the locked
+install, core build, paper typecheck, paper tests, status-contract tests, and
+SDK route checks each appear exactly once and pass. A missing, skipped,
+duplicate, failed, or unexpected lane makes the record red. The record also
+fails closed if the exported `NoOpExecutionAdapter` paper-only boundary cannot
+be verified. PR Static Smoke owns automatic pull-request validation and runs
+the status contract; Develop Full remains the sole automatic post-merge
+authority. Its durable effect ledger dispatches the status run exactly once for
+the verified `develop` SHA and can rediscover an interrupted dispatch without
+redelivery. Publication rechecks the branch tip immediately before writing.
+Polling consumers must still reject a record whose top-level `validUntil`
+timestamp is missing or expired, or whose `commit` is not the current
+`refs/heads/develop` SHA, even if `overall` is still `green`.
+
 ## Chat runtime integration
 
 The owner-only `PAPER_TRADING` action supports:

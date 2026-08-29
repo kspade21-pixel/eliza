@@ -20,12 +20,27 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
+import ts from "typescript";
+import { assertContainedRegularFile } from "./lib/repository-file-integrity.mjs";
 
 const SCHEMA = "eliza-paper-status/1";
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
-const LAUNCH_READINESS = "plugins/plugin-paper-trading/src/launch-readiness.ts";
-const PLUGIN_INDEX = "plugins/plugin-paper-trading/src/index.ts";
+const NO_OP_ADAPTER = "NoOpExecutionAdapter";
+const PAPER_PACKAGE_NAME = "@elizaos/plugin-paper-trading";
+const PAPER_PACKAGE_DIR = "plugins/plugin-paper-trading";
+const CANONICAL_SOURCE_ENTRY = "./src/index.ts";
+const CANONICAL_READINESS_EXPORT = "./launch-readiness.js";
+const CANONICAL_READINESS_SOURCE = "src/launch-readiness.ts";
+export const PAPER_STATUS_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+export const REQUIRED_PAPER_LANES = Object.freeze([
+  "install",
+  "build-core",
+  "paper-typecheck",
+  "paper-tests",
+  "status-contract",
+  "sdk-routes",
+]);
 
 /** Markers that would indicate a real order path replaced the no-op adapter. */
 const LIVE_EXECUTION_MARKERS = [
@@ -43,7 +58,7 @@ const LIVE_EXECUTION_MARKERS = [
  */
 const IDENTITY_FLAGS = ["repository", "ref", "commit", "run-id"];
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const lanes = [];
   const identity = {
     repository: null,
@@ -97,37 +112,164 @@ function parseArgs(argv) {
  * flag: a constant asserting "paper mode" is exactly what a change introducing
  * live execution would forget to update.
  */
-function inspectExecutionSurface() {
+export function inspectExecutionSurface(repoRoot = REPO_ROOT) {
   const findings = [];
-  let readiness;
+  let declaration;
   try {
-    readiness = readFileSync(resolve(REPO_ROOT, LAUNCH_READINESS), "utf8");
+    const manifestPath = `${PAPER_PACKAGE_DIR}/package.json`;
+    const manifest = JSON.parse(
+      readFileSync(
+        assertContainedRegularFile(
+          repoRoot,
+          manifestPath,
+          "canonical paper package manifest",
+        ).absolute,
+        "utf8",
+      ),
+    );
+    if (manifest.name !== PAPER_PACKAGE_NAME) {
+      throw new Error(`${manifestPath} must identify ${PAPER_PACKAGE_NAME}`);
+    }
+    if (manifest.elizaos?.scripts?.paperStatus !== true) {
+      throw new Error(
+        `${manifestPath} must declare elizaos.scripts.paperStatus=true`,
+      );
+    }
+    const sourceEntry = manifest.exports?.["."]?.["eliza-source"]?.import;
+    if (sourceEntry !== CANONICAL_SOURCE_ENTRY) {
+      throw new Error(
+        `${manifestPath} must bind exports["."].eliza-source.import to ${CANONICAL_SOURCE_ENTRY}`,
+      );
+    }
+    declaration = {
+      package: manifest.name,
+      packageDir: PAPER_PACKAGE_DIR,
+      paperStatus: true,
+      sourceEntry,
+      index: `${PAPER_PACKAGE_DIR}/${CANONICAL_SOURCE_ENTRY.slice(2)}`,
+    };
   } catch (cause) {
     return {
       adapter: "unreadable",
       liveExecution: "unknown",
-      findings: [`Could not read ${LAUNCH_READINESS}: ${cause.message}`],
+      findings: [
+        `Could not discover paper execution surface: ${cause.message}`,
+      ],
     };
   }
 
-  const hasNoOpAdapter = /export\s+class\s+NoOpExecutionAdapter\b/.test(
-    readiness,
-  );
-  if (!hasNoOpAdapter) {
-    findings.push(
-      `NoOpExecutionAdapter is no longer exported from ${LAUNCH_READINESS}.`,
-    );
-  }
-
-  let index = "";
+  let index;
   try {
-    index = readFileSync(resolve(REPO_ROOT, PLUGIN_INDEX), "utf8");
+    index = readFileSync(
+      assertContainedRegularFile(
+        repoRoot,
+        declaration.index,
+        "paper execution public source",
+      ).absolute,
+      "utf8",
+    );
   } catch (cause) {
-    findings.push(`Could not read ${PLUGIN_INDEX}: ${cause.message}`);
+    return {
+      adapter: "unreadable",
+      liveExecution: "unknown",
+      findings: [`Could not read ${declaration.index}: ${cause.message}`],
+    };
   }
 
   for (const marker of LIVE_EXECUTION_MARKERS) {
-    if (readiness.includes(marker) || index.includes(marker)) {
+    if (index.includes(marker)) {
+      findings.push(
+        `Possible live-execution call site "${marker}" found in the paper-trading surface.`,
+      );
+    }
+  }
+
+  const sourceFile = ts.createSourceFile(
+    declaration.index,
+    index,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const noOpReExports = sourceFile.statements.filter(
+    (statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === CANONICAL_READINESS_EXPORT &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause) &&
+      statement.exportClause.elements.some(
+        (element) =>
+          !element.isTypeOnly &&
+          element.propertyName === undefined &&
+          element.name.text === NO_OP_ADAPTER,
+      ),
+  );
+  const sourceHash = (readiness) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          declaration,
+          index: { path: declaration.index, source: index },
+          ...(readiness === undefined
+            ? {}
+            : {
+                readiness: {
+                  path: declaration.readiness,
+                  source: readiness,
+                },
+              }),
+        }),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  if (noOpReExports.length !== 1) {
+    findings.push(
+      `${NO_OP_ADAPTER} must be directly re-exported exactly once from ${CANONICAL_READINESS_EXPORT} by canonical source ${declaration.index}.`,
+    );
+    return {
+      adapter: "unknown",
+      liveExecution: "unknown",
+      sourceHash: sourceHash(),
+      findings,
+    };
+  }
+
+  declaration.readiness = posix.join(
+    declaration.packageDir,
+    CANONICAL_READINESS_SOURCE,
+  );
+
+  let readiness;
+  try {
+    readiness = readFileSync(
+      assertContainedRegularFile(
+        repoRoot,
+        declaration.readiness,
+        "paper execution readiness source",
+      ).absolute,
+      "utf8",
+    );
+  } catch (cause) {
+    return {
+      adapter: "unreadable",
+      liveExecution: "unknown",
+      findings: [`Could not read ${declaration.readiness}: ${cause.message}`],
+    };
+  }
+
+  const hasNoOpAdapter = new RegExp(
+    `export\\s+class\\s+${NO_OP_ADAPTER}\\b`,
+  ).test(readiness);
+  if (!hasNoOpAdapter) {
+    findings.push(
+      `${NO_OP_ADAPTER} is no longer exported from ${declaration.readiness}.`,
+    );
+  }
+
+  for (const marker of LIVE_EXECUTION_MARKERS) {
+    if (readiness.includes(marker)) {
       findings.push(
         `Possible live-execution call site "${marker}" found in the paper-trading surface.`,
       );
@@ -135,30 +277,75 @@ function inspectExecutionSurface() {
   }
 
   return {
-    adapter: hasNoOpAdapter ? "NoOpExecutionAdapter" : "unknown",
+    adapter: hasNoOpAdapter ? NO_OP_ADAPTER : "unknown",
     liveExecution: findings.length === 0 ? false : "unknown",
-    sourceHash: createHash("sha256")
-      .update(readiness)
-      .digest("hex")
-      .slice(0, 16),
+    sourceHash: sourceHash(readiness),
     findings,
   };
 }
 
-function main() {
-  const { lanes, out, identity } = parseArgs(process.argv.slice(2));
-  const execution = inspectExecutionSurface();
+export function assessPaperLanes(lanes) {
+  const counts = new Map();
+  for (const lane of lanes) {
+    counts.set(lane.name, (counts.get(lane.name) ?? 0) + 1);
+  }
+
+  const missing = REQUIRED_PAPER_LANES.filter((name) => !counts.has(name));
+  const skipped = lanes
+    .filter(
+      (lane) =>
+        REQUIRED_PAPER_LANES.includes(lane.name) && lane.status === "skip",
+    )
+    .map((lane) => lane.name);
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name)
+    .sort();
+  const unexpected = [...counts.keys()]
+    .filter((name) => !REQUIRED_PAPER_LANES.includes(name))
+    .sort();
+
+  return {
+    required: [...REQUIRED_PAPER_LANES],
+    complete:
+      missing.length === 0 &&
+      skipped.length === 0 &&
+      duplicates.length === 0 &&
+      unexpected.length === 0,
+    missing,
+    skipped,
+    duplicates,
+    unexpected,
+  };
+}
+
+export function buildPaperStatusRecord({
+  lanes,
+  identity,
+  execution,
+  generatedAt = new Date().toISOString(),
+}) {
+  const generatedAtMs = Date.parse(generatedAt);
+  if (!Number.isFinite(generatedAtMs)) {
+    throw new Error(`Invalid generatedAt timestamp: ${generatedAt}`);
+  }
+  const laneIntegrity = assessPaperLanes(lanes);
 
   const failed = lanes.filter((lane) => lane.status === "fail");
   const overall =
-    failed.length > 0 || execution.liveExecution !== false ? "red" : "green";
+    failed.length > 0 ||
+    !laneIntegrity.complete ||
+    execution.liveExecution !== false
+      ? "red"
+      : "green";
 
   const runId = identity["run-id"];
   const repo = identity.repository;
 
-  const record = {
+  return {
     schema: SCHEMA,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
+    validUntil: new Date(generatedAtMs + PAPER_STATUS_MAX_AGE_MS).toISOString(),
     overall,
     repository: repo,
     ref: identity.ref,
@@ -168,6 +355,7 @@ function main() {
       repo && runId ? `https://github.com/${repo}/actions/runs/${runId}` : null,
     lanes,
     failingLanes: failed.map((lane) => lane.name),
+    laneIntegrity,
     execution: {
       mode: "paper-only",
       adapter: execution.adapter,
@@ -176,6 +364,15 @@ function main() {
       findings: execution.findings,
     },
   };
+}
+
+function main() {
+  const { lanes, out, identity } = parseArgs(process.argv.slice(2));
+  const record = buildPaperStatusRecord({
+    lanes,
+    identity,
+    execution: inspectExecutionSurface(),
+  });
 
   const serialized = `${JSON.stringify(record, null, 2)}\n`;
   writeFileSync(resolve(process.cwd(), out), serialized, "utf8");
@@ -185,4 +382,9 @@ function main() {
   // status means for the job; this script's job is to report it accurately.
 }
 
-main();
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === resolve(import.meta.filename)
+) {
+  main();
+}
