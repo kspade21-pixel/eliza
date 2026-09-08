@@ -544,6 +544,41 @@ describe("paper status execution boundary", () => {
     );
   });
 
+  test("rejects safe-named methods reached through injected parameters", async () => {
+    const execution = inspectExecutionSurface(
+      await executionFixture({
+        readiness: `function isRecord(value: any) { value.transport.map("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings).toContain(
+      "Calling injected runtime capability through a parameter is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.",
+    );
+  });
+
+  test("rejects injected capabilities laundered through objects and wrappers", async () => {
+    const objectAlias = inspectExecutionSurface(
+      await executionFixture({
+        readiness: `function isRecord(value: any) { const transport = value.transport; const box = { transport }; const sink = box.transport; sink("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
+      }),
+    );
+    const wrappedAlias = inspectExecutionSurface(
+      await executionFixture({
+        readiness: `function passthrough(value: any) { return value; }\nfunction isRecord(value: any) { const box = passthrough({ ...value }); const sink = box.transport; sink("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(objectAlias.liveExecution).toBe("unknown");
+    expect(objectAlias.findings).toContain(
+      'Calling injected runtime parameter "sink" is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.',
+    );
+    expect(wrappedAlias.liveExecution).toBe("unknown");
+    expect(wrappedAlias.findings).toContain(
+      'Calling injected runtime parameter "sink" is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.',
+    );
+  });
+
   test("tracks aliased injected callables and browser transport roots", async () => {
     const aliased = inspectExecutionSurface(
       await executionFixture({
@@ -694,15 +729,17 @@ describe("paper status execution boundary", () => {
     );
 
     expect(readinessShadow.liveExecution).toBe("unknown");
-    expect(readinessShadow.findings).toContain(
-      expect.stringContaining(
-        "launch-readiness.js shadows its TypeScript source",
+    expect(
+      readinessShadow.findings.some((finding) =>
+        finding.includes("launch-readiness.js shadows its TypeScript source"),
       ),
-    );
+    ).toBe(true);
     expect(helperShadow.liveExecution).toBe("unknown");
-    expect(helperShadow.findings).toContain(
-      expect.stringContaining("helper.js shadows its TypeScript source"),
-    );
+    expect(
+      helperShadow.findings.some((finding) =>
+        finding.includes("helper.js shadows its TypeScript source"),
+      ),
+    ).toBe(true);
   });
 
   test("rejects decorators that can replace the adapter definition", async () => {

@@ -61,16 +61,19 @@ be verified. Verification parses the canonical public export and no-op adapter,
 follows every relative runtime import in the adapter's module closure, and
 rejects parse or resolution failures, dynamic loading, runtime dependencies
 outside the exact reviewed relative edges and crypto-hash allowlist, network or
-process capabilities, injected execution calls, executable public-entry
-statements, and adapter returns without one non-overridable literal
-`executed: false`. The status source hash commits to the canonical entry and
-every inspected closure file in stable
-path order. Type-only imports, comments, and display strings do not expand or
-fail runtime inspection. PR Static Smoke owns automatic pull-request validation
-and runs the status contract; Develop Full remains the sole automatic post-merge
-authority. Its durable effect ledger dispatches the status run exactly once for
-the verified `develop` SHA and can rediscover an interrupted dispatch without
-redelivery. Publication rechecks the branch tip immediately before writing.
+process capabilities, executable public-entry statements, or injected
+execution calls. Parameter-derived values remain tainted through assignments,
+object shorthand/spreads, wrappers, and iteration; member calls are accepted
+only at exact reviewed module/function/receiver paths and callback shapes.
+Adapter returns must contain one non-overridable literal `executed: false`.
+The status source hash commits to the canonical entry and every inspected
+closure file in stable path order. Type-only imports, comments, and display
+strings do not expand or fail runtime inspection. PR Static Smoke owns
+automatic pull-request validation and runs the status contract; Develop Full
+remains the sole automatic post-merge authority. Its durable effect ledger
+dispatches the status run exactly once for the verified `develop` SHA and can
+rediscover an interrupted dispatch without redelivery. Publication rechecks
+the branch tip immediately before writing.
 Polling consumers must still reject a record whose top-level `validUntil`
 timestamp is missing or expired, or whose `commit` is not the current
 `refs/heads/develop` SHA, even if `overall` is still `green`.

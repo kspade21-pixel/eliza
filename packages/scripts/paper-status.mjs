@@ -372,17 +372,127 @@ function inspectModuleCapabilities(sourceFile, modulePath, findings) {
     }
     return ts.isIdentifier(current) ? current.text : null;
   };
-  const safeParameterMemberCalls = new Set([
-    "at",
-    "entries",
-    "every",
-    "includes",
-    "map",
-    "some",
-    "sort",
-    "toString",
-    "trim",
+  const allowedParameterMemberCalls = new Map([
+    [
+      `${PAPER_PACKAGE_DIR}/${CANONICAL_READINESS_SOURCE}`,
+      new Set([
+        "encodeNumber|value.toString|0",
+        "normalizePolicy|policy.initialCashMicros.toString|0",
+        "normalizePolicy|policy.maxOrderMicros.toString|0",
+        "normalizePolicy|policy.maxSymbolExposureMicros.toString|0",
+        "normalizePolicy|policy.maxGrossExposureMicros.toString|0",
+        "normalizePolicy|policy.minCashReserveMicros.toString|0",
+        "normalizePolicy|policy.maxDailyLossMicros.toString|0",
+        "normalizePolicy|policy.feeBps.toString|0",
+        "normalizePolicy|policy.slippageBps.toString|0",
+        "normalizePolicy|policy.symbolAllowlist.some|1",
+        "normalizePolicy|policy.symbolAllowlist.map|1",
+        "normalizePolicy|symbol.trim|0",
+        "assertOrder|order.idempotencyKey.trim|0",
+        "assertOrder|order.symbol.trim|0",
+        "duplicateReceipt|order.symbol.trim|0",
+        "duplicateReceipt|order.quantityAtomic.toString|0",
+        "duplicateReceipt|order.quote.priceMicros.toString|0",
+        "canonicalPlanInput|order.symbol.trim|0",
+        "canonicalPlanInput|order.quantityAtomic.toString|0",
+        "canonicalPlanInput|order.quote.priceMicros.toString|0",
+        "buildPaperDryRunPlan|state.audit.some|1",
+        "buildPaperDryRunPlan|previewEngine.snapshot|0",
+        "buildPaperDryRunPlan|previewEngine.execute|1",
+        "isValidSnapshot|snapshot.positions.every|1",
+        "isValidSnapshot|position.symbol.trim|0",
+        "recomputePlanHash|order.idempotencyKey.trim|0",
+        "recomputePlanHash|order.symbol.trim|0",
+        "recomputePlanHash|order.quoteSource.trim|0",
+        "recomputePlanHash|policy.symbolAllowlist.some|1",
+        "recomputePlanHash|symbol.trim|0",
+        "recomputePlanHash|replayPolicy.symbolAllowlist.includes|1",
+        "recomputePlanHash|replayEngine.ledger.positions.has|1",
+        "recomputePlanHash|replayEngine.ledger.positions.set|2",
+        "recomputePlanHash|replayEngine.snapshot|0",
+        "recomputePlanHash|replayEngine.execute|1",
+      ]),
+    ],
+    [
+      `${PAPER_PACKAGE_DIR}/src/engine.ts`,
+      new Set([
+        "encodeNumber|value.toString|0",
+        "policyCommitment|policy.initialCashMicros.toString|0",
+        "policyCommitment|policy.maxOrderMicros.toString|0",
+        "policyCommitment|policy.maxSymbolExposureMicros.toString|0",
+        "policyCommitment|policy.maxGrossExposureMicros.toString|0",
+        "policyCommitment|policy.minCashReserveMicros.toString|0",
+        "policyCommitment|policy.maxDailyLossMicros.toString|0",
+        "policyCommitment|policy.feeBps.toString|0",
+        "policyCommitment|policy.slippageBps.toString|0",
+        "constructor|policy.symbolAllowlist.map|1",
+        "constructor|symbol.trim|0",
+        "execute|order.symbol.trim|0",
+        "snapshot|position.quantityAtomic.toString|0",
+        "snapshot|position.costBasisMicros.toString|0",
+        "snapshot|position.lastMarkPriceMicros.toString|0",
+        "exportState|position.quantityAtomic.toString|0",
+        "exportState|position.costBasisMicros.toString|0",
+        "exportState|position.lastMarkPriceMicros.toString|0",
+        "fromState|engine.ledger.positions.clear|0",
+        "fromState|stored.symbol.trim|0",
+        "fromState|engine.policy.symbolAllowlist.includes|1",
+        "fromState|engine.ledger.positions.has|1",
+        "fromState|engine.ledger.positions.set|2",
+        "fromState|engine.audit.splice|3",
+        "fromState|state.audit.map|1",
+        "fromState|engine.verifyAuditChain|0",
+        "fromState|engine.audit.entries|0",
+        "fromState|receipt.symbol.trim|0",
+        "fromState|receipt.idempotencyKey.trim|0",
+        "fromState|engine.#receiptsByKey.has|1",
+        "fromState|replayEngine.ledger.cashMicros.toString|0",
+        "fromState|replayEngine.execute|1",
+        "fromState|engine.#receiptsByKey.set|2",
+        "fromState|replayEngine.ledger.positions.entries|0",
+        "fromState|engine.audit.at|1",
+        "fromState|engine.ledger.cashMicros.toString|0",
+        "#validateOrder|order.idempotencyKey.trim|0",
+        "#validateOrder|order.quote.symbol.trim|0",
+        "#validateOrder|order.quote.source.trim|0",
+        "#record|order.quantityAtomic.toString|0",
+        "#record|order.quote.priceMicros.toString|0",
+        "#record|executionPrice.toString|0",
+        "#record|notional.toString|0",
+        "#record|fee.toString|0",
+        "#record|cashBefore.toString|0",
+      ]),
+    ],
   ]);
+  const staticMemberPath = (expression) => {
+    if (ts.isIdentifier(expression) || ts.isPrivateIdentifier(expression)) {
+      return expression.text;
+    }
+    if (ts.isPropertyAccessExpression(expression)) {
+      const receiver = staticMemberPath(expression.expression);
+      return receiver ? `${receiver}.${expression.name.text}` : null;
+    }
+    if (
+      ts.isElementAccessExpression(expression) &&
+      (ts.isStringLiteral(expression.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(expression.argumentExpression))
+    ) {
+      const receiver = staticMemberPath(expression.expression);
+      return receiver
+        ? `${receiver}.${expression.argumentExpression.text}`
+        : null;
+    }
+    if (
+      ts.isParenthesizedExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isTypeAssertionExpression(expression) ||
+      ts.isNonNullExpression(expression) ||
+      ts.isSatisfiesExpression(expression)
+    ) {
+      return staticMemberPath(expression.expression);
+    }
+    return null;
+  };
   const derivesFromParameters = (expression, parameters) => {
     if (parameters.has(rootIdentifier(expression))) return true;
     if (ts.isBinaryExpression(expression)) {
@@ -403,18 +513,115 @@ function inspectModuleCapabilities(sourceFile, modulePath, findings) {
       );
     }
     if (ts.isObjectLiteralExpression(expression)) {
-      return expression.properties.some(
-        (property) =>
-          ts.isPropertyAssignment(property) &&
-          derivesFromParameters(property.initializer, parameters),
+      return expression.properties.some((property) => {
+        if (ts.isPropertyAssignment(property)) {
+          return derivesFromParameters(property.initializer, parameters);
+        }
+        if (ts.isShorthandPropertyAssignment(property)) {
+          return parameters.has(property.name.text);
+        }
+        if (ts.isSpreadAssignment(property)) {
+          return derivesFromParameters(property.expression, parameters);
+        }
+        return false;
+      });
+    }
+    if (ts.isCallExpression(expression) || ts.isNewExpression(expression)) {
+      return (
+        derivesFromParameters(expression.expression, parameters) ||
+        (expression.arguments?.some((argument) =>
+          derivesFromParameters(argument, parameters),
+        ) ?? false)
+      );
+    }
+    if (
+      ts.isPrefixUnaryExpression(expression) ||
+      ts.isPostfixUnaryExpression(expression) ||
+      ts.isAwaitExpression(expression) ||
+      ts.isYieldExpression(expression) ||
+      ts.isSpreadElement(expression)
+    ) {
+      return (
+        expression.expression !== undefined &&
+        derivesFromParameters(expression.expression, parameters)
+      );
+    }
+    if (ts.isTemplateExpression(expression)) {
+      return expression.templateSpans.some((span) =>
+        derivesFromParameters(span.expression, parameters),
       );
     }
     return false;
+  };
+  const collectAssignedNames = (target, names) => {
+    if (ts.isIdentifier(target)) {
+      names.add(target.text);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(target)) {
+      const root = rootIdentifier(target);
+      if (root) names.add(root);
+      return;
+    }
+    if (ts.isArrayLiteralExpression(target)) {
+      for (const element of target.elements) {
+        if (!ts.isOmittedExpression(element)) {
+          collectAssignedNames(element, names);
+        }
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      for (const property of target.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          names.add(property.name.text);
+        } else if (ts.isPropertyAssignment(property)) {
+          collectAssignedNames(property.initializer, names);
+        } else if (ts.isSpreadAssignment(property)) {
+          collectAssignedNames(property.expression, names);
+        }
+      }
+    }
+  };
+  const isAssignmentOperator = (kind) =>
+    kind >= ts.SyntaxKind.FirstAssignment &&
+    kind <= ts.SyntaxKind.LastAssignment;
+  const namedFunctionContext = (node, inherited) => {
+    if (ts.isConstructorDeclaration(node)) return "constructor";
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) &&
+      node.name
+    ) {
+      return node.name.getText(sourceFile);
+    }
+    return inherited;
+  };
+  const isAllowedParameterMemberCall = (node, functionContext) => {
+    const path = staticMemberPath(node.expression);
+    const key = path
+      ? `${functionContext}|${path}|${node.arguments.length}`
+      : null;
+    if (!key || !allowedParameterMemberCalls.get(modulePath)?.has(key)) {
+      return false;
+    }
+    const member = path.split(".").at(-1);
+    if (member === "map" || member === "some" || member === "every") {
+      const callback = node.arguments[0];
+      return (
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+        !callback.modifiers?.some(
+          (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+        ) &&
+        !callback.asteriskToken
+      );
+    }
+    return true;
   };
   const visit = (
     node,
     inheritedParameters = new Set(),
     forbidAdapterReference = false,
+    inheritedFunctionContext = "<module>",
   ) => {
     if (
       (ts.isImportDeclaration(node) &&
@@ -427,8 +634,10 @@ function inspectModuleCapabilities(sourceFile, modulePath, findings) {
       return;
     }
     let parameters = inheritedParameters;
+    let functionContext = inheritedFunctionContext;
     if (ts.isFunctionLike(node)) {
       parameters = new Set(inheritedParameters);
+      functionContext = namedFunctionContext(node, inheritedFunctionContext);
       for (const parameter of node.parameters) {
         collectBindingNames(parameter.name, parameters);
       }
@@ -451,11 +660,22 @@ function inspectModuleCapabilities(sourceFile, modulePath, findings) {
     }
     if (
       ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
+      isAssignmentOperator(node.operatorToken.kind) &&
       derivesFromParameters(node.right, parameters)
     ) {
-      parameters.add(node.left.text);
+      collectAssignedNames(node.left, parameters);
+    }
+    if (
+      (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      derivesFromParameters(node.expression, parameters)
+    ) {
+      if (ts.isVariableDeclarationList(node.initializer)) {
+        for (const declaration of node.initializer.declarations) {
+          collectBindingNames(declaration.name, parameters);
+        }
+      } else {
+        collectAssignedNames(node.initializer, parameters);
+      }
     }
     if (
       ts.isCallExpression(node) &&
@@ -504,22 +724,16 @@ function inspectModuleCapabilities(sourceFile, modulePath, findings) {
       } else if (
         (ts.isPropertyAccessExpression(callee) ||
           ts.isElementAccessExpression(callee)) &&
-        parameters.has(rootIdentifier(callee))
+        derivesFromParameters(callee.expression, parameters) &&
+        !isAllowedParameterMemberCall(node, functionContext)
       ) {
-        const member = ts.isPropertyAccessExpression(callee)
-          ? callee.name.text
-          : ts.isStringLiteral(callee.argumentExpression)
-            ? callee.argumentExpression.text
-            : null;
-        if (member === null || !safeParameterMemberCalls.has(member)) {
-          findings.add(
-            `Calling injected runtime capability through a parameter is forbidden in ${modulePath}.`,
-          );
-        }
+        findings.add(
+          `Calling injected runtime capability through a parameter is forbidden in ${modulePath}.`,
+        );
       }
     }
     ts.forEachChild(node, (child) =>
-      visit(child, parameters, forbidAdapterReference),
+      visit(child, parameters, forbidAdapterReference, functionContext),
     );
   };
   visit(
