@@ -100,6 +100,22 @@ describe("PaperTradingEngine", () => {
     expect(engine.verifyAuditChain()).toBe(true);
   });
 
+  it("rejects an invalid runtime side before idempotency or ledger mutation", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order({ idempotencyKey: "valid-buy" }));
+    const before = engine.exportState();
+    for (const idempotencyKey of ["invalid-side", "valid-buy"]) {
+      const invalid = {
+        ...order({ idempotencyKey, quantityAtomic: 1_000n }),
+        side: "withdraw",
+      } as unknown as PaperOrder;
+
+      expect(() => engine.execute(invalid)).toThrow("INVALID_PAPER_ORDER_SIDE");
+      expect(engine.exportState()).toEqual(before);
+    }
+    expect(() => PaperTradingEngine.fromState(before)).not.toThrow();
+  });
+
   it("accepts a public quote inside the five-minute freshness window", () => {
     const engine = new PaperTradingEngine();
     const receipt = engine.execute(

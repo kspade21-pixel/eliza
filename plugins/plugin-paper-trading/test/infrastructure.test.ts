@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CoinGeckoKeylessQuoteSource,
   type PaperEngineState,
+  type PaperOrder,
   PaperStateStore,
   PaperTradingEngine,
   PaperTradingService,
@@ -40,6 +41,40 @@ describe("restart-safe paper infrastructure", () => {
       expect(() => new PaperTradingService(undefined, store)).toThrow(
         "INVALID_PAPER_STATE_VERSION",
       );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not persist an invalid runtime order side", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "paper-state-"));
+    try {
+      const store = new PaperStateStore(path.join(directory, "ledger.json"));
+      const service = new PaperTradingService(undefined, store);
+      const before = store.load();
+      const saveSpy = vi.spyOn(store, "save");
+      const invalid = {
+        idempotencyKey: "invalid-service-side",
+        side: "withdraw",
+        symbol: "BTC",
+        quantityAtomic: 1_000n,
+        quote: {
+          symbol: "BTC",
+          priceMicros: 50_000_000_000n,
+          observedAtMs: 1_787_545_599_000,
+          source: "verified-test-fixture",
+        },
+        requestedAtMs: 1_787_545_600_000,
+      } as unknown as PaperOrder;
+
+      expect(() => service.execute(invalid)).toThrow(
+        "INVALID_PAPER_ORDER_SIDE",
+      );
+      expect(store.load()).toEqual(before);
+      expect(saveSpy).not.toHaveBeenCalled();
+
+      const restarted = new PaperTradingService(undefined, store);
+      expect(restarted.engine.exportState()).toEqual(before);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

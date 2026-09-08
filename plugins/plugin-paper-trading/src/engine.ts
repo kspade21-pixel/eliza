@@ -187,6 +187,13 @@ export class PaperTradingEngine {
   }
 
   execute(order: PaperOrder): AuditReceipt {
+    if (
+      !order ||
+      typeof order !== "object" ||
+      (order.side !== "buy" && order.side !== "sell")
+    ) {
+      throw new Error("INVALID_PAPER_ORDER_SIDE");
+    }
     const duplicate = this.#receiptsByKey.get(order.idempotencyKey);
     if (duplicate) return duplicate;
 

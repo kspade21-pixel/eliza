@@ -21,6 +21,9 @@ Direct engine orders likewise require non-negative safe-integer millisecond
 values for both the requested and observed quote timestamps. Invalid timestamps
 fail closed before quote-age arithmetic; rejected attempts use a deterministic
 finite audit timestamp so exported state remains restart-safe.
+Runtime-invalid order sides fail before idempotency lookup, audit creation,
+persistence, or ledger mutation, preventing malformed non-buy/sell values from
+falling through to simulated sell behavior.
 
 ## Default $20 policy
 
