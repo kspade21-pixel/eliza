@@ -18,7 +18,7 @@ import {
 const ZERO_HASH = "0".repeat(64);
 const SHA256 = /^[a-f0-9]{64}$/;
 const POLICY_COMMITMENT_VERSION = "paper-risk-policy-commitment/v1";
-const STATE_COMMITMENT_VERSION = "paper-engine-state-commitment/v1";
+const STATE_COMMITMENT_VERSION = "paper-engine-state-commitment/v2";
 
 type PaperEngineStateCommitment = Omit<PaperEngineState, "stateSha256">;
 
@@ -51,12 +51,6 @@ const PAPER_AUDIT_REASONS = new Set([
   "INVALID_ORDER_TIMESTAMP",
   "STALE_OR_FUTURE_QUOTE",
 ]);
-const UNREPLAYABLE_PAPER_REJECTION_REASONS = new Set([
-  "QUOTE_SYMBOL_MISMATCH",
-  "MISSING_QUOTE_PROVENANCE",
-  "INVALID_ORDER_TIMESTAMP",
-  "STALE_OR_FUTURE_QUOTE",
-]);
 const PAPER_AUDIT_RECEIPT_KEYS = new Set([
   "sequence",
   "mode",
@@ -67,6 +61,10 @@ const PAPER_AUDIT_RECEIPT_KEYS = new Set([
   "symbol",
   "quantityAtomic",
   "quotePriceMicros",
+  "quoteSymbol",
+  "quoteSource",
+  "quoteObservedAtMs",
+  "requestedAtMs",
   "executionPriceMicros",
   "notionalMicros",
   "feeMicros",
@@ -87,6 +85,27 @@ function isUnsignedDecimal(value: unknown): value is string {
 
 function isPositiveDecimal(value: unknown): value is string {
   return typeof value === "string" && POSITIVE_DECIMAL.test(value);
+}
+
+function encodeNumber(value: number): string {
+  if (Number.isNaN(value)) return "NaN";
+  if (value === Number.POSITIVE_INFINITY) return "Infinity";
+  if (value === Number.NEGATIVE_INFINITY) return "-Infinity";
+  if (Object.is(value, -0)) return "-0";
+  return value.toString();
+}
+
+function decodeCanonicalNumber(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const decoded =
+    value === "NaN"
+      ? Number.NaN
+      : value === "Infinity"
+        ? Number.POSITIVE_INFINITY
+        : value === "-Infinity"
+          ? Number.NEGATIVE_INFINITY
+          : Number(value);
+  return encodeNumber(decoded) === value ? decoded : undefined;
 }
 
 function policyCommitment(policy: RiskPolicy): string {
@@ -356,7 +375,7 @@ export class PaperTradingEngine {
 
   exportState(): PaperEngineState {
     const state: PaperEngineStateCommitment = {
-      version: 2,
+      version: 3,
       policySha256: policyCommitment(this.policy),
       cashMicros: this.ledger.cashMicros.toString(),
       realizedPnlMicros: this.ledger.realizedPnlMicros.toString(),
@@ -378,7 +397,7 @@ export class PaperTradingEngine {
   ): PaperTradingEngine {
     if (
       !state ||
-      state.version !== 2 ||
+      state.version !== 3 ||
       !Array.isArray(state.positions) ||
       !Array.isArray(state.audit)
     ) {
@@ -449,6 +468,9 @@ export class PaperTradingEngine {
       engine.audit.length,
       ...state.audit.map((receipt) => ({ ...receipt })),
     );
+    if (!engine.verifyAuditChain()) {
+      throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
+    }
     const replayEngine = new PaperTradingEngine(engine.policy);
     for (const [index, receipt] of engine.audit.entries()) {
       const normalizedSymbol =
@@ -479,6 +501,10 @@ export class PaperTradingEngine {
         (receipt.reason === "MISSING_IDEMPOTENCY_KEY"
           ? receipt.idempotencyKey.trim().length === 0
           : receipt.idempotencyKey.trim().length > 0);
+      const requestedAtMs = decodeCanonicalNumber(receipt.requestedAtMs);
+      const quoteObservedAtMs = decodeCanonicalNumber(
+        receipt.quoteObservedAtMs,
+      );
       if (
         !Number.isSafeInteger(receipt.sequence) ||
         receipt.sequence !== index + 1 ||
@@ -489,6 +515,10 @@ export class PaperTradingEngine {
         (receipt.side !== "buy" && receipt.side !== "sell") ||
         typeof receipt.symbol !== "string" ||
         receipt.symbol !== normalizedSymbol ||
+        typeof receipt.quoteSymbol !== "string" ||
+        typeof receipt.quoteSource !== "string" ||
+        requestedAtMs === undefined ||
+        quoteObservedAtMs === undefined ||
         (receipt.accepted === true &&
           !engine.policy.symbolAllowlist.includes(normalizedSymbol)) ||
         (!hasAcceptedFillShape && !hasRejectedShape) ||
@@ -506,65 +536,43 @@ export class PaperTradingEngine {
         throw new Error("INVALID_PAPER_STATE_AUDIT");
       }
 
-      const cannotReplayOriginalRejection =
-        receipt.accepted === false &&
-        UNREPLAYABLE_PAPER_REJECTION_REASONS.has(receipt.reason);
-      if (cannotReplayOriginalRejection) {
-        const requiresPositiveOrderValues =
-          receipt.reason === "INVALID_ORDER_TIMESTAMP" ||
-          receipt.reason === "STALE_OR_FUTURE_QUOTE";
+      const replayed = replayEngine.execute({
+        idempotencyKey: receipt.idempotencyKey,
+        side: receipt.side,
+        symbol: normalizedSymbol,
+        quantityAtomic: BigInt(receipt.quantityAtomic),
+        quote: {
+          symbol: receipt.quoteSymbol,
+          priceMicros: BigInt(receipt.quotePriceMicros),
+          observedAtMs: quoteObservedAtMs,
+          source: receipt.quoteSource,
+        },
+        requestedAtMs,
+      });
+      if (
+        replayed.hash !== receipt.hash ||
+        replayed.accepted !== receipt.accepted ||
+        replayed.reason !== receipt.reason ||
+        replayed.cashBeforeMicros !== receipt.cashBeforeMicros ||
+        replayed.cashAfterMicros !== receipt.cashAfterMicros
+      ) {
+        throw new Error("INVALID_PAPER_STATE_AUDIT");
+      }
+      if (receipt.accepted) {
+        const { executionPriceMicros, feeMicros, notionalMicros } = receipt;
         if (
-          replayEngine.ledger.halted ||
-          !engine.policy.symbolAllowlist.includes(normalizedSymbol) ||
-          (requiresPositiveOrderValues &&
-            (!isPositiveDecimal(receipt.quantityAtomic) ||
-              !isPositiveDecimal(receipt.quotePriceMicros))) ||
-          receipt.cashAfterMicros !== receipt.cashBeforeMicros ||
-          receipt.cashAfterMicros !== replayEngine.ledger.cashMicros.toString()
+          !isPositiveDecimal(executionPriceMicros) ||
+          !isUnsignedDecimal(feeMicros) ||
+          !isPositiveDecimal(notionalMicros) ||
+          replayed.executionPriceMicros !== executionPriceMicros ||
+          replayed.notionalMicros !== notionalMicros ||
+          replayed.feeMicros !== feeMicros
         ) {
           throw new Error("INVALID_PAPER_STATE_AUDIT");
-        }
-      } else {
-        const replayed = replayEngine.execute({
-          idempotencyKey: receipt.idempotencyKey,
-          side: receipt.side,
-          symbol: normalizedSymbol,
-          quantityAtomic: BigInt(receipt.quantityAtomic),
-          quote: {
-            symbol: normalizedSymbol,
-            priceMicros: BigInt(receipt.quotePriceMicros),
-            observedAtMs: receipt.recordedAtMs,
-            source: "restored-audit-replay",
-          },
-          requestedAtMs: receipt.recordedAtMs,
-        });
-        if (
-          replayed.accepted !== receipt.accepted ||
-          replayed.reason !== receipt.reason ||
-          replayed.cashBeforeMicros !== receipt.cashBeforeMicros ||
-          replayed.cashAfterMicros !== receipt.cashAfterMicros
-        ) {
-          throw new Error("INVALID_PAPER_STATE_AUDIT");
-        }
-        if (receipt.accepted) {
-          const { executionPriceMicros, feeMicros, notionalMicros } = receipt;
-          if (
-            !isPositiveDecimal(executionPriceMicros) ||
-            !isUnsignedDecimal(feeMicros) ||
-            !isPositiveDecimal(notionalMicros) ||
-            replayed.executionPriceMicros !== executionPriceMicros ||
-            replayed.notionalMicros !== notionalMicros ||
-            replayed.feeMicros !== feeMicros
-          ) {
-            throw new Error("INVALID_PAPER_STATE_AUDIT");
-          }
         }
       }
 
       engine.#receiptsByKey.set(receipt.idempotencyKey, receipt);
-    }
-    if (!engine.verifyAuditChain()) {
-      throw new Error("INVALID_PAPER_STATE_AUDIT_HASH");
     }
     const replayedPositionsMatch =
       replayEngine.ledger.positions.size === engine.ledger.positions.size &&
@@ -693,6 +701,10 @@ export class PaperTradingEngine {
       symbol,
       quantityAtomic: order.quantityAtomic.toString(),
       quotePriceMicros: order.quote.priceMicros.toString(),
+      quoteSymbol: order.quote.symbol,
+      quoteSource: order.quote.source,
+      quoteObservedAtMs: encodeNumber(order.quote.observedAtMs),
+      requestedAtMs: encodeNumber(order.requestedAtMs),
       ...(executionPrice === undefined
         ? {}
         : { executionPriceMicros: executionPrice.toString() }),

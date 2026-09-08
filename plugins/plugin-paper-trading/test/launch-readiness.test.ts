@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildPaperDryRunPlan,
@@ -50,6 +51,17 @@ function approval(
   };
 }
 
+function recommitPlan(plan: ReturnType<typeof buildPaperDryRunPlan>): void {
+  const { hash: _receiptHash, ...unsignedReceipt } = plan.projectedReceipt;
+  plan.projectedReceipt.hash = createHash("sha256")
+    .update(JSON.stringify(unsignedReceipt))
+    .digest("hex");
+  const { planHash: _planHash, ...unsignedPlan } = plan;
+  plan.planHash = createHash("sha256")
+    .update(JSON.stringify(unsignedPlan))
+    .digest("hex");
+}
+
 describe("paper launch readiness", () => {
   it("builds a deterministic risk-checked plan without mutating the source state", () => {
     const engine = new PaperTradingEngine();
@@ -59,6 +71,7 @@ describe("paper launch readiness", () => {
 
     expect(first).toEqual(second);
     expect(first).toMatchObject({
+      schemaVersion: 2,
       mode: "PAPER_DRY_RUN",
       executed: false,
       projectedReceipt: {
@@ -135,6 +148,120 @@ describe("paper launch readiness", () => {
     expect(tampered.planHash).toBe(plan.planHash);
     expect(
       validatePaperApprovalIntent(tampered, approval(plan.planHash), NOW),
+    ).toBe(false);
+  });
+
+  it("rejects malformed or order-inconsistent receipt evidence", () => {
+    const plan = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+    const mutations: Array<(receipt: Record<string, unknown>) => void> = [
+      (receipt) => {
+        delete receipt.quoteSymbol;
+      },
+      (receipt) => {
+        receipt.quoteSymbol = "ETH";
+      },
+      (receipt) => {
+        receipt.quoteSource = "different-source";
+      },
+      (receipt) => {
+        receipt.quoteObservedAtMs = "01";
+      },
+      (receipt) => {
+        receipt.requestedAtMs = "NaN";
+      },
+    ];
+
+    for (const mutate of mutations) {
+      const projectedReceipt = {
+        ...plan.projectedReceipt,
+      } as unknown as Record<string, unknown>;
+      mutate(projectedReceipt);
+      const malformed = {
+        ...plan,
+        projectedReceipt,
+      } as unknown as typeof plan;
+      recommitPlan(malformed);
+
+      expect(
+        validatePaperApprovalIntent(
+          malformed,
+          approval(malformed.planHash),
+          NOW,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects a rehashed legacy v1 plan contract", () => {
+    const current = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+    const legacy = {
+      ...current,
+      schemaVersion: 1,
+      projectedReceipt: { ...current.projectedReceipt },
+    } as unknown as typeof current;
+    recommitPlan(legacy);
+
+    expect(
+      validatePaperApprovalIntent(legacy, approval(legacy.planHash), NOW),
+    ).toBe(false);
+  });
+
+  it("preserves canonical negative-zero timestamps across JSON", () => {
+    const plan = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order({
+        requestedAtMs: -0,
+        quote: {
+          symbol: "BTC",
+          priceMicros: 50_000_000_000n,
+          observedAtMs: -0,
+          source: "verified-test-fixture",
+        },
+      }),
+    );
+    const roundTripped = JSON.parse(JSON.stringify(plan)) as typeof plan;
+
+    expect(plan.order.requestedAtMs).toBe("-0");
+    expect(plan.order.quoteObservedAtMs).toBe("-0");
+    expect(
+      validatePaperApprovalIntent(
+        roundTripped,
+        approval(roundTripped.planHash, {
+          approvedAtMs: 0,
+          expiresAtMs: 1,
+        }),
+        0,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a fully rehashed receipt that contradicts stale quote risk", () => {
+    const valid = buildPaperDryRunPlan(
+      new PaperTradingEngine().exportState(),
+      order(),
+    );
+    const projectedReceipt = {
+      ...valid.projectedReceipt,
+      quoteObservedAtMs: String(NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1),
+    };
+    const forged = {
+      ...valid,
+      order: {
+        ...valid.order,
+        quoteObservedAtMs: projectedReceipt.quoteObservedAtMs,
+      },
+      projectedReceipt,
+    };
+    recommitPlan(forged);
+
+    expect(
+      validatePaperApprovalIntent(forged, approval(forged.planHash), NOW),
     ).toBe(false);
   });
 

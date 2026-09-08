@@ -77,9 +77,9 @@ The owner-only `PAPER_TRADING` action supports:
 Buy and sell require a decimal quantity and idempotency key. They may use a fresh public quote or an explicitly supplied USD quote with source and ISO-8601 observation time. Quotes older than five minutes, future quotes, missing provenance, and symbols outside BTC/ETH are rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
 simulation-only.
 
-The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v2 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Startup rejects checksum or policy mismatches before restoring the ledger. Restored audit receipts are runtime-validated before idempotency indexes are rebuilt. The validator requires the exact `PAPER` mode, known receipt fields and reason codes, canonical integer encodings, valid sides and symbols, accepted/rejected field shapes, safe timestamps, and SHA-256 fields. It replays every accepted fill and every rejection that can be reconstructed from schema v2, re-enforcing execution risk, no-short inventory, cash, positions, realized P&L, and halt state. Quote-mismatch, missing-provenance, invalid-timestamp, and stale-quote reasons depend on original quote fields that v2 does not persist; those receipts are instead constrained to the correct pre-risk state and must remain ledger-nonmutating. The unkeyed hashes detect inconsistency but do not authenticate who produced the file.
+The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v3 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Each receipt retains the original quote symbol, provenance, observation time, and request time using canonical string encodings, including non-finite timestamps that were rejected before execution. Startup rejects checksum or policy mismatches before restoring the ledger. Restored audit receipts are runtime-validated before idempotency indexes are rebuilt. The validator requires the exact `PAPER` mode, known receipt fields and reason codes, canonical encodings, valid sides and symbols, accepted/rejected field shapes, safe recorded timestamps, and SHA-256 fields. It replays every accepted fill and every rejection from the recorded evidence, re-enforcing quote checks, execution risk, no-short inventory, cash, positions, realized P&L, and halt state. The unkeyed hashes detect inconsistency but do not authenticate who produced the file.
 
-Legacy v1 state is intentionally not auto-migrated because it did not commit every persisted field. Operators must archive the old paper-state file for audit, remove it from the active state path, and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
+Legacy v1 and v2 state is intentionally not auto-migrated because those schemas did not retain enough evidence to replay every rejection. Startup fails closed with `INVALID_PAPER_STATE_VERSION`. Operators must archive the old paper-state file for audit, remove it from the active path at `$HOME/.local/state/eliza/paper-trading/<agentId>.json` (`default.json` without a runtime), and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
 
 
 ## Public historical backtesting
@@ -130,9 +130,12 @@ cannot route orders, wallet actions, transfers, or credentials.
 
 The exported launch-readiness API creates an immutable, SHA-256-bound
 `PAPER_DRY_RUN` plan by evaluating a proposed paper order against an isolated
-copy of the existing ledger. It reuses the engine's current risk checks while
-leaving cash, positions, audit receipts, idempotency state, and persistent state
-unchanged.
+copy of the existing ledger. Plan schema v2 binds the original quote symbol,
+source, and canonical string encodings of observation and request times to the projected receipt. It reuses
+the engine's current risk checks, and validation independently reconstructs the
+bound pre-trade ledger and projected receipt. It leaves cash, positions, audit receipts,
+idempotency state, and persistent state unchanged. Legacy v1 plan hashes are
+rejected and must be regenerated before review.
 
 An optional short-lived approval intent may be bound to the exact plan hash.
 That intent approves review of a simulation plan only. The concrete

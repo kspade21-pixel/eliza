@@ -4,8 +4,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   CoinGeckoKeylessQuoteSource,
+  type PaperEngineState,
   PaperStateStore,
   PaperTradingEngine,
+  PaperTradingService,
 } from "../src/index.js";
 
 describe("restart-safe paper infrastructure", () => {
@@ -20,6 +22,24 @@ describe("restart-safe paper infrastructure", () => {
         engine.snapshot(),
       );
       expect(fs.readdirSync(directory)).toEqual(["ledger.json"]);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails service startup closed for legacy state", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "paper-state-"));
+    try {
+      const store = new PaperStateStore(path.join(directory, "ledger.json"));
+      const legacy = {
+        ...new PaperTradingEngine().exportState(),
+        version: 2,
+      } as unknown as PaperEngineState;
+      store.save(legacy);
+
+      expect(() => new PaperTradingService(undefined, store)).toThrow(
+        "INVALID_PAPER_STATE_VERSION",
+      );
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
