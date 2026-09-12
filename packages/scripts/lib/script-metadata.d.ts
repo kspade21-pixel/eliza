@@ -36,6 +36,8 @@ export interface ScriptMetadata {
     /** Ascending build order — deps before dependents. */
     order: number;
   };
+  /** Canonical paper-only package audited by the paper-status safety record. */
+  paperStatus?: true;
 }
 
 export interface BuildOnInstallPackage {

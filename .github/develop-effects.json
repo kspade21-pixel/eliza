@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ledgerVersion": "2026-08-21.1",
+  "ledgerVersion": "2026-08-29.1",
   "effects": [
     {
       "id": "agent-image",
@@ -29,6 +29,14 @@
       "surfaces": ["canonical", "cloud"],
       "shaInput": "deployment_sha",
       "inputs": { "environment": "staging" }
+    },
+    {
+      "id": "paper-status",
+      "workflow": "paper-nightly.yml",
+      "surfaces": ["canonical", "cloud", "quality"],
+      "shaInput": "source_sha",
+      "bindSourceSha": true,
+      "inputs": {}
     }
   ],
   "promotion": {

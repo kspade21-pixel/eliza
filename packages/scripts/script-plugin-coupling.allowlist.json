@@ -113,6 +113,11 @@
     "reason": "credential/opt-in live-suite manifest must bind each discovered test file to its exact package path so drift checks can prove the guarded source and its execution metadata agree"
   },
   {
+    "file": "packages/scripts/paper-status.mjs",
+    "tokens": ["@elizaos/plugin-paper-trading", "plugins/plugin-paper-trading"],
+    "reason": "systemic safety coupling: the public paper-only status must bind one fixed package identity and path so package-owned metadata or a shadow workspace cannot redirect execution-surface inspection"
+  },
+  {
     "file": "packages/scripts/run-scenario-benchmark.mjs",
     "tokens": ["plugins/plugin-personal-assistant"],
     "reason": "scenario benchmark drives the personal-assistant executive-assistant corpus by explicit path"

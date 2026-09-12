@@ -13,7 +13,7 @@ import type {
 } from "./types.js";
 
 export interface PaperDryRunPlan {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: "PAPER_DRY_RUN";
   planHash: string;
   order: {
@@ -22,9 +22,10 @@ export interface PaperDryRunPlan {
     symbol: string;
     quantityAtomic: string;
     quotePriceMicros: string;
-    quoteObservedAtMs: number;
+    quoteSymbol: string;
+    quoteObservedAtMs: string;
     quoteSource: string;
-    requestedAtMs: number;
+    requestedAtMs: string;
   };
   effectivePolicy: {
     initialCashMicros: string;
@@ -73,6 +74,19 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const INTENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_APPROVAL_LIFETIME_MS = 15 * 60 * 1000;
 const INTEGER = /^(?:0|[1-9]\d*)$/;
+
+function encodeNumber(value: number): string {
+  if (Object.is(value, -0)) return "-0";
+  return value.toString();
+}
+
+function decodeCanonicalSafeInteger(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const decoded = Number(value);
+  return Number.isSafeInteger(decoded) && encodeNumber(decoded) === value
+    ? decoded
+    : undefined;
+}
 
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
@@ -162,6 +176,10 @@ function duplicateReceipt(
     symbol: order.symbol.trim().toUpperCase(),
     quantityAtomic: order.quantityAtomic.toString(),
     quotePriceMicros: order.quote.priceMicros.toString(),
+    quoteSymbol: order.quote.symbol,
+    quoteSource: order.quote.source,
+    quoteObservedAtMs: encodeNumber(order.quote.observedAtMs),
+    requestedAtMs: encodeNumber(order.requestedAtMs),
     cashBeforeMicros: snapshot.cashMicros,
     cashAfterMicros: snapshot.cashMicros,
     previousHash: snapshot.auditHead,
@@ -177,7 +195,7 @@ function canonicalPlanInput(
   projectedReceipt: AuditReceipt,
 ): unknown {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: "PAPER_DRY_RUN",
     order: {
       idempotencyKey: order.idempotencyKey,
@@ -185,9 +203,10 @@ function canonicalPlanInput(
       symbol: order.symbol.trim().toUpperCase(),
       quantityAtomic: order.quantityAtomic.toString(),
       quotePriceMicros: order.quote.priceMicros.toString(),
-      quoteObservedAtMs: order.quote.observedAtMs,
+      quoteSymbol: order.quote.symbol,
+      quoteObservedAtMs: encodeNumber(order.quote.observedAtMs),
       quoteSource: order.quote.source,
-      requestedAtMs: order.requestedAtMs,
+      requestedAtMs: encodeNumber(order.requestedAtMs),
     },
     effectivePolicy,
     snapshotBefore,
@@ -230,7 +249,13 @@ export function buildPaperDryRunPlan(
 }
 
 function isValidReceipt(receipt: unknown): receipt is AuditReceipt {
-  if (!isRecord(receipt) || !SHA256.test(String(receipt.hash))) return false;
+  if (
+    !isRecord(receipt) ||
+    typeof receipt.hash !== "string" ||
+    !SHA256.test(receipt.hash)
+  ) {
+    return false;
+  }
   const { hash, ...unsigned } = receipt;
   return (
     hashReceipt(unsigned as Omit<AuditReceipt, "hash">) === hash &&
@@ -245,6 +270,10 @@ function isValidReceipt(receipt: unknown): receipt is AuditReceipt {
     INTEGER.test(receipt.quantityAtomic) &&
     typeof receipt.quotePriceMicros === "string" &&
     INTEGER.test(receipt.quotePriceMicros) &&
+    typeof receipt.quoteSymbol === "string" &&
+    typeof receipt.quoteSource === "string" &&
+    typeof receipt.quoteObservedAtMs === "string" &&
+    typeof receipt.requestedAtMs === "string" &&
     typeof receipt.cashBeforeMicros === "string" &&
     INTEGER.test(receipt.cashBeforeMicros) &&
     typeof receipt.cashAfterMicros === "string" &&
@@ -280,19 +309,23 @@ function isValidSnapshot(snapshot: Record<string, unknown>): boolean {
       isRecord(position) &&
       typeof position.symbol === "string" &&
       !!position.symbol.trim() &&
+      position.symbol === position.symbol.trim().toUpperCase() &&
       typeof position.quantityAtomic === "string" &&
       INTEGER.test(position.quantityAtomic) &&
+      BigInt(position.quantityAtomic) > 0n &&
       typeof position.costBasisMicros === "string" &&
       INTEGER.test(position.costBasisMicros) &&
+      BigInt(position.costBasisMicros) > 0n &&
       typeof position.lastMarkPriceMicros === "string" &&
-      INTEGER.test(position.lastMarkPriceMicros),
+      INTEGER.test(position.lastMarkPriceMicros) &&
+      BigInt(position.lastMarkPriceMicros) > 0n,
   );
 }
 
 function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
   if (
     !isRecord(plan) ||
-    plan.schemaVersion !== 1 ||
+    plan.schemaVersion !== 2 ||
     plan.mode !== "PAPER_DRY_RUN" ||
     plan.executed !== false ||
     !isRecord(plan.order) ||
@@ -305,6 +338,8 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
   }
   const order = plan.order;
   const policy = plan.effectivePolicy;
+  const quoteObservedAtMs = decodeCanonicalSafeInteger(order.quoteObservedAtMs);
+  const requestedAtMs = decodeCanonicalSafeInteger(order.requestedAtMs);
   if (
     typeof order.idempotencyKey !== "string" ||
     !order.idempotencyKey.trim() ||
@@ -315,10 +350,11 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     !INTEGER.test(order.quantityAtomic) ||
     typeof order.quotePriceMicros !== "string" ||
     !INTEGER.test(order.quotePriceMicros) ||
-    !Number.isSafeInteger(order.quoteObservedAtMs) ||
+    typeof order.quoteSymbol !== "string" ||
+    quoteObservedAtMs === undefined ||
     typeof order.quoteSource !== "string" ||
     !order.quoteSource.trim() ||
-    !Number.isSafeInteger(order.requestedAtMs) ||
+    requestedAtMs === undefined ||
     !Array.isArray(policy.symbolAllowlist) ||
     policy.symbolAllowlist.some((symbol) => typeof symbol !== "string") ||
     !Number.isSafeInteger(policy.maxQuoteAgeMs)
@@ -336,7 +372,10 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     "slippageBps",
   ] as const;
   if (
-    numericPolicyFields.some((field) => !INTEGER.test(String(policy[field])))
+    numericPolicyFields.some((field) => {
+      const value = policy[field];
+      return typeof value !== "string" || !INTEGER.test(value);
+    })
   ) {
     return undefined;
   }
@@ -355,10 +394,91 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     plan.projectedReceipt.symbol !== order.symbol ||
     plan.projectedReceipt.quantityAtomic !== order.quantityAtomic ||
     plan.projectedReceipt.quotePriceMicros !== order.quotePriceMicros ||
+    plan.projectedReceipt.quoteSymbol !== order.quoteSymbol ||
+    plan.projectedReceipt.quoteSource !== order.quoteSource ||
+    plan.projectedReceipt.quoteObservedAtMs !== order.quoteObservedAtMs ||
+    plan.projectedReceipt.requestedAtMs !== order.requestedAtMs ||
     plan.projectedReceipt.sequence !== plan.snapshotBefore.auditLength + 1 ||
     plan.projectedReceipt.previousHash !== plan.snapshotBefore.auditHead ||
     plan.projectedReceipt.cashBeforeMicros !== plan.snapshotBefore.cashMicros ||
-    plan.projectedReceipt.recordedAtMs !== order.requestedAtMs
+    plan.projectedReceipt.recordedAtMs !== requestedAtMs
+  ) {
+    return undefined;
+  }
+  const replayPolicy: RiskPolicy = {
+    initialCashMicros: BigInt(policy.initialCashMicros as string),
+    maxOrderMicros: BigInt(policy.maxOrderMicros as string),
+    maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros as string),
+    maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros as string),
+    minCashReserveMicros: BigInt(policy.minCashReserveMicros as string),
+    maxDailyLossMicros: BigInt(policy.maxDailyLossMicros as string),
+    feeBps: BigInt(policy.feeBps as string),
+    slippageBps: BigInt(policy.slippageBps as string),
+    maxQuoteAgeMs: policy.maxQuoteAgeMs as number,
+    symbolAllowlist: policy.symbolAllowlist as string[],
+  };
+  const replayEngine = new PaperTradingEngine(replayPolicy);
+  replayEngine.ledger.cashMicros = BigInt(plan.snapshotBefore.cashMicros);
+  replayEngine.ledger.realizedPnlMicros = BigInt(
+    plan.snapshotBefore.realizedPnlMicros,
+  );
+  replayEngine.ledger.halted = plan.snapshotBefore.halted;
+  for (const position of plan.snapshotBefore.positions) {
+    if (
+      !replayPolicy.symbolAllowlist.includes(position.symbol) ||
+      replayEngine.ledger.positions.has(position.symbol)
+    ) {
+      return undefined;
+    }
+    replayEngine.ledger.positions.set(position.symbol, {
+      symbol: position.symbol,
+      quantityAtomic: BigInt(position.quantityAtomic),
+      costBasisMicros: BigInt(position.costBasisMicros),
+      lastMarkPriceMicros: BigInt(position.lastMarkPriceMicros),
+    });
+  }
+  const reconstructedSnapshot = replayEngine.snapshot();
+  if (
+    reconstructedSnapshot.cashMicros !== plan.snapshotBefore.cashMicros ||
+    reconstructedSnapshot.realizedPnlMicros !==
+      plan.snapshotBefore.realizedPnlMicros ||
+    reconstructedSnapshot.grossExposureMicros !==
+      plan.snapshotBefore.grossExposureMicros ||
+    reconstructedSnapshot.equityMicros !== plan.snapshotBefore.equityMicros ||
+    reconstructedSnapshot.halted !== plan.snapshotBefore.halted ||
+    JSON.stringify(reconstructedSnapshot.positions) !==
+      JSON.stringify(plan.snapshotBefore.positions) ||
+    (plan.snapshotBefore.auditLength === 0
+      ? plan.snapshotBefore.auditHead !== "0".repeat(64)
+      : plan.snapshotBefore.auditHead === "0".repeat(64))
+  ) {
+    return undefined;
+  }
+  const replayedReceipt = replayEngine.execute({
+    idempotencyKey: order.idempotencyKey as string,
+    side: order.side as PaperOrder["side"],
+    symbol: order.symbol as string,
+    quantityAtomic: BigInt(order.quantityAtomic as string),
+    quote: {
+      symbol: order.quoteSymbol as string,
+      priceMicros: BigInt(order.quotePriceMicros as string),
+      observedAtMs: quoteObservedAtMs,
+      source: order.quoteSource as string,
+    },
+    requestedAtMs,
+  });
+  const { hash: _replayedHash, ...replayedUnsigned } = replayedReceipt;
+  const projectedUnsigned: Omit<AuditReceipt, "hash"> = {
+    ...replayedUnsigned,
+    sequence: plan.snapshotBefore.auditLength + 1,
+    previousHash: plan.snapshotBefore.auditHead,
+  };
+  const expectedReceipt: AuditReceipt = {
+    ...projectedUnsigned,
+    hash: hashReceipt(projectedUnsigned),
+  };
+  if (
+    JSON.stringify(expectedReceipt) !== JSON.stringify(plan.projectedReceipt)
   ) {
     return undefined;
   }
@@ -371,7 +491,7 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     return undefined;
   }
   const canonical = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: "PAPER_DRY_RUN",
     order,
     effectivePolicy: policy,

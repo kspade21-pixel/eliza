@@ -61,6 +61,10 @@ export interface AuditReceipt {
   symbol: string;
   quantityAtomic: string;
   quotePriceMicros: string;
+  quoteSymbol: string;
+  quoteSource: string;
+  quoteObservedAtMs: string;
+  requestedAtMs: string;
   executionPriceMicros?: string;
   notionalMicros?: string;
   feeMicros?: string;
@@ -89,7 +93,7 @@ export interface PaperSnapshot {
 }
 
 export interface PaperEngineState {
-  version: 2;
+  version: 3;
   policySha256: string;
   cashMicros: string;
   realizedPnlMicros: string;

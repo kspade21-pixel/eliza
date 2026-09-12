@@ -55,6 +55,10 @@
  *     no install step; build-private-workspace-packages.mjs builds it on a fresh
  *     clone. `sentinel` is the dist file whose presence proves it is already
  *     built; `order` is the ascending build order (deps before dependents).
+ *
+ *   paperStatus: true
+ *     Marks the canonical paper-only package whose public source export and
+ *     no-op re-export paper-status.mjs binds and audits independently.
  */
 
 import { listPackages } from "./workspaces.mjs";

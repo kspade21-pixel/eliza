@@ -119,6 +119,12 @@ export function validateRegistry(registry) {
     if (!/^[a-z][a-z0-9_]*$/.test(effect.shaInput ?? "")) {
       throw new Error(`${effect.id}: invalid shaInput`);
     }
+    if (
+      effect.bindSourceSha !== undefined &&
+      typeof effect.bindSourceSha !== "boolean"
+    ) {
+      throw new Error(`${effect.id}: bindSourceSha must be boolean`);
+    }
     assertObject(effect.inputs, `${effect.id} inputs`);
     if (Object.hasOwn(effect.inputs, effect.shaInput)) {
       throw new Error(`${effect.id}: inputs may not override shaInput`);
@@ -181,6 +187,7 @@ export function buildEffectPlans({ expected, observed, registry, repoRoot }) {
         ledgerVersion: registry.ledgerVersion,
         registryDigest,
         shaInput: effect.shaInput,
+        sourceSha: effect.bindSourceSha ? expected.headSha : null,
         surfaceDigests,
         workflow: effect.workflow,
         workflowDigest: workflowDigest(repoRoot, effect.workflow),

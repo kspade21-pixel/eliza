@@ -21,6 +21,9 @@ Direct engine orders likewise require non-negative safe-integer millisecond
 values for both the requested and observed quote timestamps. Invalid timestamps
 fail closed before quote-age arithmetic; rejected attempts use a deterministic
 finite audit timestamp so exported state remains restart-safe.
+Runtime-invalid order sides fail before idempotency lookup, audit creation,
+persistence, or ledger mutation, preventing malformed non-buy/sell values from
+falling through to simulated sell behavior.
 
 ## Default $20 policy
 
@@ -49,6 +52,54 @@ bun run --cwd plugins/plugin-paper-trading typecheck
 bun run --cwd plugins/plugin-paper-trading build
 ```
 
+The manually generated machine-readable health record is green only when the locked
+install, core build, paper typecheck, paper tests, status-contract tests, and
+SDK route checks each appear exactly once and pass. A missing, skipped,
+duplicate, failed, or unexpected lane makes the record red. The record also
+fails closed if the exported `NoOpExecutionAdapter` paper-only boundary cannot
+be verified. Verification parses the canonical public export and no-op adapter,
+follows every relative runtime import in the adapter's module closure, and
+rejects parse or resolution failures, dynamic loading, runtime dependencies
+outside the exact reviewed relative edges and crypto-hash allowlist, network or
+process capabilities, executable public-entry statements, or injected
+execution calls. Parameter-derived values remain tainted through assignments,
+destructuring, object shorthand/spreads, wrappers, closures, iteration, and
+mutable-storage writes; member calls are accepted only at exact reviewed
+module/function/receiver paths, callback shapes, and receiver provenance.
+Inspection permits only reviewed
+zero-argument primitive call chains and exact reconstructed-policy shapes. It
+fails closed on reflection (including legacy prototype accessors), indirect or
+non-allowlisted computed access and invocation, constructor recovery, runtime
+accessors, tagged calls, non-allowlisted construction, protected-runtime
+shadowing or transitive capture, and mutation of callable methods or trusted
+factories. Rejected parameter-derived calls report their exact module,
+function, and source location.
+Adapter returns must contain one non-overridable literal `executed: false`.
+The status source hash commits to the raw package metadata, the exact package
+and shared TypeScript build configuration, and every local runtime dependency
+reachable from the canonical public entry, in stable path order. The package
+build configuration is also structurally constrained to compile only `src`
+into the default `dist` export. The producer compares that full SHA-256 graph
+digest with a reviewed pin for every repository root by default, so metadata,
+build redirection, or source drift makes the status red until the pin and
+deterministic evidence are explicitly reviewed together. The stricter semantic
+capability policy remains scoped to the readiness execution closure, where
+network access is forbidden; public market-data code remains read-only and is
+covered by the digest. Tests must explicitly opt into semantic-only fixture
+inspection. The pin is a review tripwire, not an authenticity boundary; its
+value and the status producer must be reviewed together. The readiness
+validator uses explicit string checks instead of runtime coercion on receipt
+and policy inputs. Type-only imports, comments, and display strings do not
+expand or fail runtime inspection. PR Static Smoke owns automatic pull-request
+validation and runs the status contract; Develop Full
+remains the sole automatic post-merge authority. Its durable effect ledger
+dispatches the status run exactly once for the verified `develop` SHA and can
+rediscover an interrupted dispatch without redelivery. Publication rechecks
+the branch tip immediately before writing.
+Polling consumers must still reject a record whose top-level `validUntil`
+timestamp is missing or expired, or whose `commit` is not the current
+`refs/heads/develop` SHA, even if `overall` is still `green`.
+
 ## Chat runtime integration
 
 The owner-only `PAPER_TRADING` action supports:
@@ -63,9 +114,9 @@ The owner-only `PAPER_TRADING` action supports:
 Buy and sell require a decimal quantity and idempotency key. They may use a fresh public quote or an explicitly supplied USD quote with source and ISO-8601 observation time. Quotes older than five minutes, future quotes, missing provenance, and symbols outside BTC/ETH are rejected. The `PAPER_TRADING_PORTFOLIO` provider labels all context as
 simulation-only.
 
-The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v2 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Startup rejects checksum or policy mismatches before restoring the ledger. Restored audit receipts are runtime-validated before idempotency indexes are rebuilt. The validator requires the exact `PAPER` mode, known receipt fields and reason codes, canonical integer encodings, valid sides and symbols, accepted/rejected field shapes, safe timestamps, and SHA-256 fields. It replays every accepted fill and every rejection that can be reconstructed from schema v2, re-enforcing execution risk, no-short inventory, cash, positions, realized P&L, and halt state. Quote-mismatch, missing-provenance, invalid-timestamp, and stale-quote reasons depend on original quote fields that v2 does not persist; those receipts are instead constrained to the correct pre-risk state and must remain ledger-nonmutating. The unkeyed hashes detect inconsistency but do not authenticate who produced the file.
+The runtime service atomically persists the simulated ledger, positions, audit chain, and idempotency receipts under Eliza's local state directory. State schema v3 binds cash, realized P&L, halt status, positions, audit receipts, and the normalized risk policy into a deterministic `stateSha256` commitment. Each receipt retains the original quote symbol, provenance, observation time, and request time using canonical string encodings, including non-finite timestamps that were rejected before execution. Startup rejects checksum or policy mismatches before restoring the ledger. Restored audit receipts are runtime-validated before idempotency indexes are rebuilt. The validator requires the exact `PAPER` mode, known receipt fields and reason codes, canonical encodings, valid sides and symbols, accepted/rejected field shapes, safe recorded timestamps, and SHA-256 fields. It replays every accepted fill and every rejection from the recorded evidence, re-enforcing quote checks, execution risk, no-short inventory, cash, positions, realized P&L, and halt state. The unkeyed hashes detect inconsistency but do not authenticate who produced the file.
 
-Legacy v1 state is intentionally not auto-migrated because it did not commit every persisted field. Operators must archive the old paper-state file for audit, remove it from the active state path, and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
+Legacy v1 and v2 state is intentionally not auto-migrated because those schemas did not retain enough evidence to replay every rejection. Startup fails closed with `INVALID_PAPER_STATE_VERSION`. Operators must archive the old paper-state file for audit, remove it from the active path at `$HOME/.local/state/eliza/paper-trading/<agentId>.json` (`default.json` without a runtime), and start a new $20 simulated ledger. The SHA-256 commitment detects inconsistent contents but is unkeyed and does not prove who created or modified a file. Live execution remains out of scope.
 
 
 ## Public historical backtesting
@@ -116,9 +167,12 @@ cannot route orders, wallet actions, transfers, or credentials.
 
 The exported launch-readiness API creates an immutable, SHA-256-bound
 `PAPER_DRY_RUN` plan by evaluating a proposed paper order against an isolated
-copy of the existing ledger. It reuses the engine's current risk checks while
-leaving cash, positions, audit receipts, idempotency state, and persistent state
-unchanged.
+copy of the existing ledger. Plan schema v2 binds the original quote symbol,
+source, and canonical string encodings of observation and request times to the projected receipt. It reuses
+the engine's current risk checks, and validation independently reconstructs the
+bound pre-trade ledger and projected receipt. It leaves cash, positions, audit receipts,
+idempotency state, and persistent state unchanged. Legacy v1 plan hashes are
+rejected and must be regenerated before review.
 
 An optional short-lived approval intent may be bound to the exact plan hash.
 That intent approves review of a simulation plan only. The concrete

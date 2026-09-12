@@ -1,22 +1,16 @@
-# Fast merge gate for the paper-trading lane.
+# Manually dispatched diagnostic gate for the paper-trading lane.
 #
 # Develop Full is ~95 jobs and takes ~90 minutes, and a large share of its lanes
 # cannot pass in a fork at all: they need cloud secrets, Apple/Windows signing,
 # paid macOS runners, or live provider credentials. Waiting on that to decide
 # whether a paper-trading change is safe to merge means never getting an answer.
 #
-# This gate runs only steps that are deterministic, secret-free, and verified to
-# pass on ubuntu-24.04 from a clean checkout. It is deliberately narrow: it
-# proves the paper-trading contract and the workspace still builds. It does not
-# replace Develop Full as a release signal.
+# PR Static Smoke owns automatic pull-request and merge-candidate validation.
+# This workflow remains a manually dispatched, narrow diagnostic that runs only
+# deterministic, secret-free steps on ubuntu-24.04 from a clean checkout.
 name: Paper Gate
 
 on:
-  pull_request:
-    branches: [develop, main]
-    types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
 
 concurrency:
@@ -71,6 +65,9 @@ jobs:
 
       - name: Test paper trading
         run: bun run --cwd plugins/plugin-paper-trading test
+
+      - name: Test paper status contract
+        run: bun test packages/scripts/__tests__/paper-status.test.ts
 
       # The SDK test script ends in scripts/audit-api-routes.mjs, a static
       # comparison of packages/cloud/api against the generated wrappers in

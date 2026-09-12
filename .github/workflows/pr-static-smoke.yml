@@ -168,6 +168,9 @@ jobs:
       - name: Run deterministic paper-trading tests
         run: bun run --cwd plugins/plugin-paper-trading test
 
+      - name: Validate paper status contract
+        run: bun test packages/scripts/__tests__/paper-status.test.ts
+
       - name: Build affected workspace closure
         env:
           TURBO_SCM_BASE: ${{ steps.diff.outputs.merge_base }}

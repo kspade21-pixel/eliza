@@ -12,7 +12,7 @@ import {
   type PaperEngineState,
   PaperTradingEngine,
 } from "../src/index.js";
-import type { AuditReceipt, PaperOrder } from "../src/types.js";
+import type { AuditReceipt, PaperOrder, RiskPolicy } from "../src/types.js";
 
 const NOW = 1_787_545_600_000;
 const BTC_PRICE_MICROS = 50_000_000_000n;
@@ -39,7 +39,7 @@ function recommitState(state: PaperEngineState): void {
   state.stateSha256 = createHash("sha256")
     .update(
       JSON.stringify({
-        schemaVersion: "paper-engine-state-commitment/v1",
+        schemaVersion: "paper-engine-state-commitment/v2",
         state: committedState,
       }),
     )
@@ -98,6 +98,22 @@ describe("PaperTradingEngine", () => {
     });
     expect(engine.audit).toHaveLength(1);
     expect(engine.verifyAuditChain()).toBe(true);
+  });
+
+  it("rejects an invalid runtime side before idempotency or ledger mutation", () => {
+    const engine = new PaperTradingEngine();
+    engine.execute(order({ idempotencyKey: "valid-buy" }));
+    const before = engine.exportState();
+    for (const idempotencyKey of ["invalid-side", "valid-buy"]) {
+      const invalid = {
+        ...order({ idempotencyKey, quantityAtomic: 1_000n }),
+        side: "withdraw",
+      } as unknown as PaperOrder;
+
+      expect(() => engine.execute(invalid)).toThrow("INVALID_PAPER_ORDER_SIDE");
+      expect(engine.exportState()).toEqual(before);
+    }
+    expect(() => PaperTradingEngine.fromState(before)).not.toThrow();
   });
 
   it("accepts a public quote inside the five-minute freshness window", () => {
@@ -183,6 +199,28 @@ describe("PaperTradingEngine", () => {
         expect(receipt).toMatchObject({
           accepted: false,
           reason: "INVALID_ORDER_TIMESTAMP",
+          requestedAtMs:
+            field === "requestedAtMs"
+              ? [
+                  "NaN",
+                  "Infinity",
+                  "-Infinity",
+                  "-1",
+                  "0.5",
+                  "9007199254740992",
+                ][index]
+              : NOW.toString(),
+          quoteObservedAtMs:
+            field === "observedAtMs"
+              ? [
+                  "NaN",
+                  "Infinity",
+                  "-Infinity",
+                  "-1",
+                  "0.5",
+                  "9007199254740992",
+                ][index]
+              : (NOW - 1_000).toString(),
         });
         expect(Number.isSafeInteger(receipt.recordedAtMs)).toBe(true);
         expect(receipt.recordedAtMs).toBeGreaterThanOrEqual(0);
@@ -266,6 +304,105 @@ describe("PaperTradingEngine", () => {
     expect(engine.verifyAuditChain()).toBe(true);
   });
 
+  it("enforces and replays every execution risk-limit rejection", () => {
+    const cases: Array<{
+      reason: string;
+      policy: RiskPolicy;
+      request: PaperOrder;
+    }> = [
+      {
+        reason: "ORDER_TOO_SMALL_AFTER_ROUNDING",
+        policy: DEFAULT_PAPER_POLICY,
+        request: order({
+          idempotencyKey: "rounding-limit",
+          side: "sell",
+          quantityAtomic: 1n,
+          quote: {
+            symbol: "BTC",
+            priceMicros: 1n,
+            observedAtMs: NOW - 1_000,
+            source: "verified-test-fixture",
+          },
+        }),
+      },
+      {
+        reason: "INSUFFICIENT_CASH",
+        policy: {
+          ...DEFAULT_PAPER_POLICY,
+          maxOrderMicros: 30_000_000n,
+          maxSymbolExposureMicros: 30_000_000n,
+          maxGrossExposureMicros: 30_000_000n,
+          minCashReserveMicros: 0n,
+        },
+        request: order({
+          idempotencyKey: "cash-limit",
+          quantityAtomic: 40_000n,
+        }),
+      },
+      {
+        reason: "MIN_RESERVE_BREACH",
+        policy: {
+          ...DEFAULT_PAPER_POLICY,
+          maxOrderMicros: 15_000_000n,
+          maxSymbolExposureMicros: 15_000_000n,
+          maxGrossExposureMicros: 15_000_000n,
+        },
+        request: order({
+          idempotencyKey: "reserve-limit",
+          quantityAtomic: 20_000n,
+        }),
+      },
+      {
+        reason: "MAX_SYMBOL_EXPOSURE_EXCEEDED",
+        policy: {
+          ...DEFAULT_PAPER_POLICY,
+          maxOrderMicros: 10_000_000n,
+          maxSymbolExposureMicros: 1_000_000n,
+          minCashReserveMicros: 0n,
+        },
+        request: order({
+          idempotencyKey: "symbol-limit",
+          quantityAtomic: 3_000n,
+        }),
+      },
+      {
+        reason: "MAX_GROSS_EXPOSURE_EXCEEDED",
+        policy: {
+          ...DEFAULT_PAPER_POLICY,
+          maxOrderMicros: 10_000_000n,
+          maxSymbolExposureMicros: 10_000_000n,
+          maxGrossExposureMicros: 1_000_000n,
+          minCashReserveMicros: 0n,
+        },
+        request: order({
+          idempotencyKey: "gross-limit",
+          quantityAtomic: 3_000n,
+        }),
+      },
+    ];
+
+    for (const { policy, reason, request } of cases) {
+      const engine = new PaperTradingEngine(policy);
+      const before = engine.snapshot();
+      const receipt = engine.execute(request);
+
+      expect(receipt).toMatchObject({ accepted: false, reason });
+      expect(engine.snapshot()).toEqual({
+        ...before,
+        auditLength: 1,
+        auditHead: receipt.hash,
+      });
+
+      const state = JSON.parse(
+        JSON.stringify(engine.exportState()),
+      ) as PaperEngineState;
+      const restored = PaperTradingEngine.fromState(state, policy);
+      expect(restored.exportState()).toEqual(state);
+      expect(restored.execute(request)).toEqual(receipt);
+      expect(restored.audit).toHaveLength(1);
+    }
+  });
+
   it("closes a simulated position without allowing a short", () => {
     const engine = new PaperTradingEngine();
     engine.execute(order());
@@ -308,7 +445,7 @@ describe("PaperTradingEngine", () => {
     const state = first.exportState();
     const restored = PaperTradingEngine.fromState(state);
 
-    expect(state).toMatchObject({ version: 2 });
+    expect(state).toMatchObject({ version: 3 });
     expect(state.policySha256).toMatch(/^[a-f0-9]{64}$/);
     expect(state.stateSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(restored.exportState()).toEqual(state);
@@ -378,17 +515,16 @@ describe("PaperTradingEngine", () => {
         symbol: "DOGE",
       }),
     );
-    engine.execute(
-      order({
-        idempotencyKey: "missing-provenance",
-        quote: {
-          symbol: "BTC",
-          priceMicros: BTC_PRICE_MICROS,
-          observedAtMs: NOW,
-          source: "",
-        },
-      }),
-    );
+    const missingProvenanceOrder = order({
+      idempotencyKey: "missing-provenance",
+      quote: {
+        symbol: "BTC",
+        priceMicros: BTC_PRICE_MICROS,
+        observedAtMs: NOW,
+        source: "",
+      },
+    });
+    const rejectedReceipt = engine.execute(missingProvenanceOrder);
     engine.execute(
       order({
         idempotencyKey: "over-limit",
@@ -408,6 +544,8 @@ describe("PaperTradingEngine", () => {
     );
 
     expect(restored.exportState()).toEqual(state);
+    expect(restored.execute(missingProvenanceOrder)).toEqual(rejectedReceipt);
+    expect(restored.audit).toHaveLength(state.audit.length);
     expect(restored.audit.map(({ reason }) => reason)).toEqual([
       "MISSING_IDEMPOTENCY_KEY",
       "INVALID_ORDER_VALUE",
@@ -436,6 +574,169 @@ describe("PaperTradingEngine", () => {
     ).toEqual(haltedState);
   });
 
+  it("persists enough evidence to replay every quote and timestamp rejection", () => {
+    const cases: Array<{
+      expected: Partial<AuditReceipt>;
+      request: PaperOrder;
+    }> = [
+      {
+        request: order({
+          idempotencyKey: "quote-symbol-mismatch",
+          quote: {
+            symbol: " ETH ",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - 1_000,
+            source: "verified-test-fixture",
+          },
+        }),
+        expected: {
+          reason: "QUOTE_SYMBOL_MISMATCH",
+          quoteSymbol: " ETH ",
+          quoteSource: "verified-test-fixture",
+          requestedAtMs: NOW.toString(),
+          quoteObservedAtMs: (NOW - 1_000).toString(),
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "missing-quote-provenance",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - 1_000,
+            source: "",
+          },
+        }),
+        expected: {
+          reason: "MISSING_QUOTE_PROVENANCE",
+          quoteSymbol: "BTC",
+          quoteSource: "",
+          requestedAtMs: NOW.toString(),
+          quoteObservedAtMs: (NOW - 1_000).toString(),
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "invalid-request-timestamp",
+          requestedAtMs: Number.NaN,
+        }),
+        expected: {
+          reason: "INVALID_ORDER_TIMESTAMP",
+          quoteSymbol: "BTC",
+          quoteSource: "verified-test-fixture",
+          requestedAtMs: "NaN",
+          quoteObservedAtMs: (NOW - 1_000).toString(),
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "stale-quote",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
+            source: "verified-test-fixture",
+          },
+        }),
+        expected: {
+          reason: "STALE_OR_FUTURE_QUOTE",
+          quoteSymbol: "BTC",
+          quoteSource: "verified-test-fixture",
+          requestedAtMs: NOW.toString(),
+          quoteObservedAtMs: (
+            NOW -
+            DEFAULT_PAPER_POLICY.maxQuoteAgeMs -
+            1
+          ).toString(),
+        },
+      },
+    ];
+
+    for (const { expected, request } of cases) {
+      const engine = new PaperTradingEngine();
+      const receipt = engine.execute(request);
+      expect(receipt).toMatchObject({ accepted: false, ...expected });
+
+      const state = JSON.parse(
+        JSON.stringify(engine.exportState()),
+      ) as PaperEngineState;
+      expect(PaperTradingEngine.fromState(state).exportState()).toEqual(state);
+    }
+  });
+
+  it("rejects rehashed quote evidence that no longer proves its rejection", () => {
+    const cases: Array<{
+      request: PaperOrder;
+      repairEvidence: (receipt: AuditReceipt) => void;
+    }> = [
+      {
+        request: order({
+          idempotencyKey: "forged-symbol-mismatch",
+          quote: {
+            symbol: "ETH",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - 1_000,
+            source: "verified-test-fixture",
+          },
+        }),
+        repairEvidence: (receipt) => {
+          receipt.quoteSymbol = "BTC";
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "forged-missing-provenance",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - 1_000,
+            source: "",
+          },
+        }),
+        repairEvidence: (receipt) => {
+          receipt.quoteSource = "verified-test-fixture";
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "forged-invalid-timestamp",
+          requestedAtMs: Number.NaN,
+        }),
+        repairEvidence: (receipt) => {
+          receipt.requestedAtMs = NOW.toString();
+        },
+      },
+      {
+        request: order({
+          idempotencyKey: "forged-stale-quote",
+          quote: {
+            symbol: "BTC",
+            priceMicros: BTC_PRICE_MICROS,
+            observedAtMs: NOW - DEFAULT_PAPER_POLICY.maxQuoteAgeMs - 1,
+            source: "verified-test-fixture",
+          },
+        }),
+        repairEvidence: (receipt) => {
+          receipt.quoteObservedAtMs = (NOW - 1_000).toString();
+        },
+      },
+    ];
+
+    for (const { repairEvidence, request } of cases) {
+      const engine = new PaperTradingEngine();
+      engine.execute(request);
+      const state = engine.exportState();
+      const receipt = state.audit.at(0);
+      if (!receipt) throw new Error("Expected a paper rejection receipt");
+      repairEvidence(receipt);
+      recommitAuditState(state);
+
+      expect(() => PaperTradingEngine.fromState(state)).toThrow(
+        "INVALID_PAPER_STATE_AUDIT",
+      );
+    }
+  });
+
   it("rejects rehashed receipts with invalid fields or fill arithmetic", () => {
     const mutations: Array<(receipt: AuditReceipt) => void> = [
       (receipt) => {
@@ -461,6 +762,18 @@ describe("PaperTradingEngine", () => {
       },
       (receipt) => {
         receipt.quotePriceMicros = "-1";
+      },
+      (receipt) => {
+        delete (receipt as Partial<AuditReceipt>).quoteSymbol;
+      },
+      (receipt) => {
+        receipt.quoteSource = 1 as unknown as string;
+      },
+      (receipt) => {
+        receipt.quoteObservedAtMs = "01";
+      },
+      (receipt) => {
+        receipt.requestedAtMs = "nan";
       },
       (receipt) => {
         receipt.executionPriceMicros = "1";
@@ -714,7 +1027,7 @@ describe("PaperTradingEngine", () => {
     );
   });
 
-  it("binds restart state to the risk policy and rejects legacy v1 state", () => {
+  it("binds restart state to the risk policy and rejects legacy state", () => {
     const engine = new PaperTradingEngine();
     const state = engine.exportState();
 
@@ -734,10 +1047,12 @@ describe("PaperTradingEngine", () => {
       "INVALID_PAPER_STATE_HALTED",
     );
 
-    const legacy = { ...state, version: 1 } as unknown as PaperEngineState;
-    expect(() => PaperTradingEngine.fromState(legacy)).toThrow(
-      "INVALID_PAPER_STATE_VERSION",
-    );
+    for (const version of [1, 2]) {
+      const legacy = { ...state, version } as unknown as PaperEngineState;
+      expect(() => PaperTradingEngine.fromState(legacy)).toThrow(
+        "INVALID_PAPER_STATE_VERSION",
+      );
+    }
   });
 
   it("detects audit tampering", () => {

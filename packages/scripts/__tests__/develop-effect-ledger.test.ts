@@ -157,6 +157,27 @@ describe("develop effect registry and exact plans", () => {
     ).not.toBe(baseline.plans[0].inputDigest);
   });
 
+  test("can bind non-reusable publication effects to the exact source SHA", () => {
+    const sourceBound = registry();
+    sourceBound.effects[0].bindSourceSha = true;
+    const baseline = plans({ registry: sourceBound });
+    const { expected, observed } = manifests();
+    expected.headSha = PRIOR_SHA;
+    observed.headSha = PRIOR_SHA;
+    observed.surfaces = expected.surfaces.map((surface) =>
+      createEvidence(expected, surface.id, NOW, 24),
+    );
+
+    expect(
+      buildEffectPlans({
+        expected,
+        observed,
+        registry: sourceBound,
+        repoRoot: fixtureRoot(),
+      }).plans[0].inputDigest,
+    ).not.toBe(baseline.plans[0].inputDigest);
+  });
+
   test("rejects duplicate, empty, colliding, and smuggled definitions", () => {
     const duplicate = registry();
     duplicate.effects.push({ ...duplicate.effects[0] });
@@ -170,6 +191,11 @@ describe("develop effect registry and exact plans", () => {
     const smuggled = registry();
     smuggled.effects[0].inputs.source_sha = SOURCE_SHA;
     expect(() => validateRegistry(smuggled)).toThrow("override shaInput");
+    const malformedBinding = registry();
+    malformedBinding.effects[0].bindSourceSha = "yes";
+    expect(() => validateRegistry(malformedBinding)).toThrow(
+      "bindSourceSha must be boolean",
+    );
   });
 
   test("fails closed for unknown surfaces and stale or tampered manifests", () => {
