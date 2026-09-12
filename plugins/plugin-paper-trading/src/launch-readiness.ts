@@ -249,7 +249,13 @@ export function buildPaperDryRunPlan(
 }
 
 function isValidReceipt(receipt: unknown): receipt is AuditReceipt {
-  if (!isRecord(receipt) || !SHA256.test(String(receipt.hash))) return false;
+  if (
+    !isRecord(receipt) ||
+    typeof receipt.hash !== "string" ||
+    !SHA256.test(receipt.hash)
+  ) {
+    return false;
+  }
   const { hash, ...unsigned } = receipt;
   return (
     hashReceipt(unsigned as Omit<AuditReceipt, "hash">) === hash &&
@@ -366,7 +372,10 @@ function recomputePlanHash(plan: PaperDryRunPlan): string | undefined {
     "slippageBps",
   ] as const;
   if (
-    numericPolicyFields.some((field) => !INTEGER.test(String(policy[field])))
+    numericPolicyFields.some((field) => {
+      const value = policy[field];
+      return typeof value !== "string" || !INTEGER.test(value);
+    })
   ) {
     return undefined;
   }

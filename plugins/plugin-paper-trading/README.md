@@ -63,13 +63,35 @@ rejects parse or resolution failures, dynamic loading, runtime dependencies
 outside the exact reviewed relative edges and crypto-hash allowlist, network or
 process capabilities, executable public-entry statements, or injected
 execution calls. Parameter-derived values remain tainted through assignments,
-object shorthand/spreads, wrappers, and iteration; member calls are accepted
-only at exact reviewed module/function/receiver paths and callback shapes.
+destructuring, object shorthand/spreads, wrappers, closures, iteration, and
+mutable-storage writes; member calls are accepted only at exact reviewed
+module/function/receiver paths, callback shapes, and receiver provenance.
+Inspection permits only reviewed
+zero-argument primitive call chains and exact reconstructed-policy shapes. It
+fails closed on reflection (including legacy prototype accessors), indirect or
+non-allowlisted computed access and invocation, constructor recovery, runtime
+accessors, tagged calls, non-allowlisted construction, protected-runtime
+shadowing or transitive capture, and mutation of callable methods or trusted
+factories. Rejected parameter-derived calls report their exact module,
+function, and source location.
 Adapter returns must contain one non-overridable literal `executed: false`.
-The status source hash commits to the canonical entry and every inspected
-closure file in stable path order. Type-only imports, comments, and display
-strings do not expand or fail runtime inspection. PR Static Smoke owns
-automatic pull-request validation and runs the status contract; Develop Full
+The status source hash commits to the raw package metadata, the exact package
+and shared TypeScript build configuration, and every local runtime dependency
+reachable from the canonical public entry, in stable path order. The package
+build configuration is also structurally constrained to compile only `src`
+into the default `dist` export. The producer compares that full SHA-256 graph
+digest with a reviewed pin for every repository root by default, so metadata,
+build redirection, or source drift makes the status red until the pin and
+deterministic evidence are explicitly reviewed together. The stricter semantic
+capability policy remains scoped to the readiness execution closure, where
+network access is forbidden; public market-data code remains read-only and is
+covered by the digest. Tests must explicitly opt into semantic-only fixture
+inspection. The pin is a review tripwire, not an authenticity boundary; its
+value and the status producer must be reviewed together. The readiness
+validator uses explicit string checks instead of runtime coercion on receipt
+and policy inputs. Type-only imports, comments, and display strings do not
+expand or fail runtime inspection. PR Static Smoke owns automatic pull-request
+validation and runs the status contract; Develop Full
 remains the sole automatic post-merge authority. Its durable effect ledger
 dispatches the status run exactly once for the verified `develop` SHA and can
 rediscover an interrupted dispatch without redelivery. Publication rechecks

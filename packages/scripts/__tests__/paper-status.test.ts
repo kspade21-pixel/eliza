@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -87,6 +87,29 @@ async function executionFixture({
         2,
       )}\n`,
     ),
+    writeFile(
+      join(root, "plugins", "plugin-paper-trading", "tsconfig.build.json"),
+      `${JSON.stringify(
+        {
+          extends: "../tsconfig.build.shared.json",
+          compilerOptions: {
+            allowImportingTsExtensions: false,
+            declaration: true,
+            declarationMap: true,
+            emitDeclarationOnly: false,
+            noEmit: false,
+            outDir: "dist",
+            rootDir: "src",
+            rewriteRelativeImportExtensions: true,
+          },
+          include: ["src/**/*.ts"],
+          exclude: ["test/**/*.ts"],
+        },
+        null,
+        2,
+      )}\n`,
+    ),
+    writeFile(join(root, "plugins", "tsconfig.build.shared.json"), "{}\n"),
     writeFile(join(source, "launch-readiness.ts"), readiness),
     writeFile(join(source, "index.ts"), index),
     ...Object.entries(files).map(async ([relativePath, contents]) => {
@@ -96,6 +119,39 @@ async function executionFixture({
     }),
   ]);
   return root;
+}
+
+async function canonicalExecutionFixture() {
+  const root = await mkdtemp(join(tmpdir(), "paper-status-canonical-"));
+  tempDirs.push(root);
+  const sourcePackage = join(repoRoot, "plugins", "plugin-paper-trading");
+  const targetPackage = join(root, "plugins", "plugin-paper-trading");
+  await mkdir(targetPackage, { recursive: true });
+  await Promise.all([
+    cp(
+      join(sourcePackage, "package.json"),
+      join(targetPackage, "package.json"),
+    ),
+    cp(
+      join(sourcePackage, "tsconfig.build.json"),
+      join(targetPackage, "tsconfig.build.json"),
+    ),
+    cp(
+      join(repoRoot, "plugins", "tsconfig.build.shared.json"),
+      join(root, "plugins", "tsconfig.build.shared.json"),
+    ),
+    cp(join(sourcePackage, "src"), join(targetPackage, "src"), {
+      recursive: true,
+    }),
+  ]);
+  return { root, targetPackage };
+}
+
+function inspectFixtureSurface(
+  root: string,
+  expectedClosureSha256: string | null = null,
+) {
+  return inspectExecutionSurface(root, expectedClosureSha256);
 }
 
 afterEach(async () => {
@@ -229,7 +285,7 @@ describe("paper status lane integrity", () => {
 });
 
 describe("paper status execution boundary", () => {
-  test("keeps the real paper adapter green without traversing market data", () => {
+  test("keeps the real paper adapter green with a pinned public runtime graph", () => {
     const result = inspectExecutionSurface(repoRoot);
     const repeated = inspectExecutionSurface(repoRoot);
 
@@ -241,10 +297,12 @@ describe("paper status execution boundary", () => {
       }),
     );
     expect(repeated).toEqual(result);
+    expect(result.sourceSha256).toHaveLength(64);
+    expect(result.sourceHash).toBe(result.sourceSha256?.slice(0, 16));
   });
 
   test("recognizes the explicit no-op adapter in an otherwise clean surface", async () => {
-    const result = inspectExecutionSurface(await executionFixture());
+    const result = inspectFixtureSurface(await executionFixture());
 
     expect(result).toEqual(
       expect.objectContaining({
@@ -255,8 +313,192 @@ describe("paper status execution boundary", () => {
     );
   });
 
+  test("requires the reviewed closure digest for every repository by default", async () => {
+    const result = inspectExecutionSurface(await executionFixture());
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]).toContain("Execution closure digest changed");
+  });
+
+  test("rejects implicit invocation through await and parameter iteration", async () => {
+    const awaited = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export async function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  await { then: state.hook };
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+    const iterated = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  for (const ignored of ({ [Symbol.iterator]: state.hook } as any)) { void ignored; }
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(
+      awaited.findings.some((finding) =>
+        finding.includes("Implicit await/yield invocation is forbidden"),
+      ),
+    ).toBe(true);
+    expect(
+      iterated.findings.some((finding) =>
+        finding.includes("parameter-derived iteration is forbidden"),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["String", "toString"],
+    ["Number", "valueOf"],
+    ["BigInt", "valueOf"],
+  ])(
+    "rejects implicit invocation through parameter-derived %s coercion",
+    async (coercion, hook) => {
+      const execution = inspectFixtureSurface(
+        await executionFixture({
+          readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  ${coercion}({ ${hook}: state.hook });
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+        }),
+      );
+
+      expect(
+        execution.findings.some((finding) =>
+          finding.includes("Non-allowlisted parameter-derived coercion"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test("rejects a parameter-derived iterable spread", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  void [...({ [Symbol.iterator]: state.hook } as any)];
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("parameter-derived iterable spread is forbidden"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects explicit resource-management hooks", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  using resource = state;
+  void resource;
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Explicit resource-management hooks are forbidden"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects implicit toJSON invocation through generic serialization", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  JSON.stringify({ toJSON: state.hook });
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("non-reviewed receiver"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects implicit coercion in an Error constructor", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  throw new Error({ toString: state.hook } as any);
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Non-allowlisted runtime construction"),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["binary", "void (({ valueOf: state.hook } as any) + 1);"],
+    [
+      "template",
+      "void `" +
+        String.fromCharCode(36) +
+        "{{ toString: state.hook } as any}`;",
+    ],
+  ])(
+    "rejects %s coercion of a parameter-derived container",
+    async (_name, expression) => {
+      const execution = inspectFixtureSurface(
+        await executionFixture({
+          readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  ${expression}
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+        }),
+      );
+
+      expect(
+        execution.findings.some((finding) =>
+          finding.includes(
+            "Implicit coercion of a parameter-derived container is forbidden",
+          ),
+        ),
+      ).toBe(true);
+    },
+  );
+
   test("reports a live-execution marker as unknown and forces red", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         index: "export const placeOrder = () => {};\n",
       }),
@@ -305,30 +547,32 @@ describe("paper status execution boundary", () => {
       ),
       'Forbidden execution capability "global" found in plugins/plugin-paper-trading/src/launch-readiness.ts.',
     ],
-  ])("rejects %s in the canonical adapter", async (_name, readiness, finding) => {
-    const execution = inspectExecutionSurface(
-      await executionFixture({ readiness }),
-    );
+  ])(
+    "rejects %s in the canonical adapter",
+    async (_name, readiness, finding) => {
+      const execution = inspectFixtureSurface(
+        await executionFixture({ readiness }),
+      );
 
-    expect(execution.liveExecution).toBe("unknown");
-    expect(execution.findings).toContain(finding);
-    expect(
-      buildPaperStatusRecord({
-        lanes: completeLanes(),
-        identity,
-        execution,
-        generatedAt: "2026-08-29T00:00:00.000Z",
-      }).overall,
-    ).toBe("red");
-  });
+      expect(execution.liveExecution).toBe("unknown");
+      expect(execution.findings).toContain(finding);
+      expect(
+        buildPaperStatusRecord({
+          lanes: completeLanes(),
+          identity,
+          execution,
+          generatedAt: "2026-08-29T00:00:00.000Z",
+        }).overall,
+      ).toBe("red");
+    },
+  );
 
   test("rejects a network call hidden in a reachable local helper", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
-        readiness:
-          `import { postOrder } from "./broker-helper.js";\n${noOpAdapterWithBody(
-            "postOrder();",
-          )}`,
+        readiness: `import { postOrder } from "./broker-helper.js";\n${noOpAdapterWithBody(
+          "postOrder();",
+        )}`,
         files: {
           "broker-helper.ts":
             'export function postOrder() { return fetch("https://broker.invalid/orders", { method: "POST" }); }\n',
@@ -343,7 +587,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects an empty side-effect import that hides a network call", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness: `import {} from "./side-effect.js";\n${minimalNoOpAdapter}`,
         files: {
@@ -360,12 +604,11 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects a forbidden external runtime dependency", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
-        readiness:
-          `import { request } from "node:https";\n${noOpAdapterWithBody(
-            'request("https://broker.invalid/orders");',
-          )}`,
+        readiness: `import { request } from "node:https";\n${noOpAdapterWithBody(
+          'request("https://broker.invalid/orders");',
+        )}`,
       }),
     );
 
@@ -397,7 +640,7 @@ describe("paper status execution boundary", () => {
       'Forbidden execution capability "Function" found in plugins/plugin-paper-trading/src/launch-readiness.ts.',
     ],
   ])("rejects %s capability loading", async (_name, body, finding) => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({ readiness: noOpAdapterWithBody(body) }),
     );
 
@@ -406,7 +649,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("ignores capability names in comments, strings, and type-only imports", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness:
           'import type { fetch } from "./capability-types.js";\n// fetch("https://broker.invalid/orders")\nconst note = "fetch placeOrder";\nconst labels = { fetch: "display only" };\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void plan; void intent; void nowMs; void note; void labels; return { executed: false }; } }\n',
@@ -421,20 +664,18 @@ describe("paper status execution boundary", () => {
   });
 
   test("fails closed on missing and out-of-tree runtime dependencies", async () => {
-    const missing = inspectExecutionSurface(
+    const missing = inspectFixtureSurface(
       await executionFixture({
-        readiness:
-          `import { helper } from "./missing.js";\n${noOpAdapterWithBody(
-            "helper();",
-          )}`,
+        readiness: `import { helper } from "./missing.js";\n${noOpAdapterWithBody(
+          "helper();",
+        )}`,
       }),
     );
-    const escaped = inspectExecutionSurface(
+    const escaped = inspectFixtureSurface(
       await executionFixture({
-        readiness:
-          `import { helper } from "../../../outside.js";\n${noOpAdapterWithBody(
-            "helper();",
-          )}`,
+        readiness: `import { helper } from "../../../outside.js";\n${noOpAdapterWithBody(
+          "helper();",
+        )}`,
       }),
     );
 
@@ -451,18 +692,17 @@ describe("paper status execution boundary", () => {
   });
 
   test("fails closed on malformed adapter and helper source", async () => {
-    const malformedAdapter = inspectExecutionSurface(
+    const malformedAdapter = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "export class NoOpExecutionAdapter { evaluate( { return { executed: false }; } }\n",
       }),
     );
-    const malformedHelper = inspectExecutionSurface(
+    const malformedHelper = inspectFixtureSurface(
       await executionFixture({
-        readiness:
-          `import { helper } from "./helper.js";\n${noOpAdapterWithBody(
-            "helper();",
-          )}`,
+        readiness: `import { helper } from "./helper.js";\n${noOpAdapterWithBody(
+          "helper();",
+        )}`,
         files: {
           "helper.ts": "export function helper( {\n",
         },
@@ -484,7 +724,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("walks nested and cyclic non-allowlisted dependencies once", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness:
           'import { first } from "./first.js";\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void plan; void intent; void nowMs; void first; return { executed: false }; } }\n',
@@ -507,7 +747,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("requires a concrete synchronous no-op evaluate method", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness: "export class NoOpExecutionAdapter {}\n",
       }),
@@ -521,13 +761,13 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects injected capability calls and overridable no-op receipts", async () => {
-    const injected = inspectExecutionSurface(
+    const injected = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "export class NoOpExecutionAdapter { evaluate(plan: any, intent: unknown, nowMs: number) { void intent; void nowMs; plan.broker.execute(); return { executed: false }; } }\n",
       }),
     );
-    const spreadOverride = inspectExecutionSurface(
+    const spreadOverride = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "export class NoOpExecutionAdapter { evaluate(plan: any, intent: unknown, nowMs: number) { void intent; void nowMs; return { executed: false, ...plan.receipt }; } }\n",
@@ -545,7 +785,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects safe-named methods reached through injected parameters", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness: `function isRecord(value: any) { value.transport.map("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
       }),
@@ -558,12 +798,12 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects injected capabilities laundered through objects and wrappers", async () => {
-    const objectAlias = inspectExecutionSurface(
+    const objectAlias = inspectFixtureSurface(
       await executionFixture({
         readiness: `function isRecord(value: any) { const transport = value.transport; const box = { transport }; const sink = box.transport; sink("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
       }),
     );
-    const wrappedAlias = inspectExecutionSurface(
+    const wrappedAlias = inspectFixtureSurface(
       await executionFixture({
         readiness: `function passthrough(value: any) { return value; }\nfunction isRecord(value: any) { const box = passthrough({ ...value }); const sink = box.transport; sink("https://broker.invalid/orders", { method: "POST" }); return true; }\n${minimalNoOpAdapter}`,
       }),
@@ -580,19 +820,19 @@ describe("paper status execution boundary", () => {
   });
 
   test("tracks aliased injected callables and browser transport roots", async () => {
-    const aliased = inspectExecutionSurface(
+    const aliased = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "function isRecord(value: any) { const sink = (value as any).transport; sink(); return true; }\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void intent; void nowMs; isRecord(plan); return { executed: false }; } }\n",
       }),
     );
-    const browser = inspectExecutionSurface(
+    const browser = inspectFixtureSurface(
       await executionFixture({
         readiness:
           'function isRecord(value: unknown) { void value; document.createElement("form").submit(); return true; }\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void intent; void nowMs; isRecord(plan); return { executed: false }; } }\n',
       }),
     );
-    const logicalAlias = inspectExecutionSurface(
+    const logicalAlias = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "function isRecord(value: any) { const sink = value && value.transport; sink(); return true; }\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void intent; void nowMs; isRecord(plan); return { executed: false }; } }\n",
@@ -613,8 +853,522 @@ describe("paper status execution boundary", () => {
     );
   });
 
+  test("permits the reviewed zero-argument primitive call chain", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function normalizePolicy(policy: any) { return policy.symbolAllowlist.map((symbol: string) => symbol.trim().toUpperCase()); }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe(false);
+    expect(execution.findings).toEqual([]);
+  });
+
+  test("rejects a trusted receiver name backed by injected state", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function buildPaperDryRunPlan(state: any, order: any, policy?: any) { void policy; const previewEngine = order.useFresh ? new PaperTradingEngine({}) : state; return previewEngine.execute(order); }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings).toContain(
+      "Calling injected runtime capability through a parameter is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.",
+    );
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("Rejected parameter-derived call at") &&
+          finding.includes("(buildPaperDryRunPlan)"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects a spoofed reviewed regex receiver that stores an injected callable", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `const CANONICAL_INTEGER: any = {
+  slot: null,
+  test(value: unknown) { this.slot = value; return true; },
+  run() { this.slot(); },
+};
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void state;
+  void policy;
+  CANONICAL_INTEGER.test(order.hook);
+  CANONICAL_INTEGER.run();
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Rejected parameter-derived call at"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects a runtime namespace that shadows a reviewed builtin", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `namespace Object {
+  export const keys: { (this: any, value: any): any[] } = function (value) { this.slot = value; return []; };
+  export const run: { (this: any): void } = function () { this.slot(); };
+}
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  Object.keys(state);
+  Object.run();
+  return { safe: true };
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Runtime namespace declarations are forbidden"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects decorators that implicitly call an injected capability", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `export function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void order;
+  void policy;
+  @(state.decorator)
+  class Trigger {}
+  return Trigger;
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Decorator execution is forbidden"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects replacement of a reviewed static receiver method", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `const CANONICAL_INTEGER = /^(?:0|-?[1-9]\\d*)$/;
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void state;
+  void policy;
+  CANONICAL_INTEGER.test = order.hook;
+  return CANONICAL_INTEGER.test("1");
+}
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Mutation of a trusted runtime binding or callable"),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["property alias", "const mutate = Object.defineProperty;"],
+    ["destructured alias", "const { defineProperty: mutate } = Object;"],
+    [
+      "transitively wrapped alias",
+      "const box = { Object }; const { Object: ObjectAlias } = box; const { defineProperty: mutate } = ObjectAlias;",
+    ],
+    [
+      "template-computed alias",
+      "const mutate = Object[`define$" + '{"Property"}`];',
+    ],
+  ])("rejects a %s that replaces a trusted method", async (_name, alias) => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  const previewEngine = new PaperTradingEngine(policy);
+  ${alias}
+  mutate(previewEngine, "execute", { value: state.transport });
+  return previewEngine.execute(order);
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("runtime binding may not be captured") ||
+          finding.includes("mutation capability may not be captured"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects a parameter-derived write into a trusted receiver", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  const previewEngine = new PaperTradingEngine(policy);
+  previewEngine.ledger = state;
+  return previewEngine.execute(order);
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Non-allowlisted trusted receiver write"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects a computed write through an injected receiver", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function normalizePolicy(policy: any) {
+  const field = "sink";
+  policy[field] = 1;
+  return policy.symbolAllowlist.map((symbol: string) => symbol.trim().toUpperCase());
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("Non-allowlisted computed runtime access") ||
+          finding.includes("Mutation through a parameter-derived receiver"),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["delete", "delete policy.sink;"],
+    ["postfix update", "policy.sink++;"],
+    ["prefix update", "++policy.sink;"],
+    ["iteration target", "for (policy.sink of [1]) {}"],
+    ["destructuring target", "({ x: policy.sink } = { x: 1 });"],
+  ])("rejects a %s through an injected receiver", async (_name, mutation) => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function normalizePolicy(policy: any) {
+  ${mutation}
+  return policy.symbolAllowlist.map((symbol: string) => symbol.trim().toUpperCase());
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("Non-allowlisted runtime mutation") ||
+          finding.includes("Non-allowlisted runtime write"),
+      ),
+    ).toBe(true);
+  });
+
+  test.each([
+    ["object", "({ previewEngine } = state);"],
+    ["array", "[previewEngine] = state.engines;"],
+  ])(
+    "rejects %s-destructuring reassignment of a trusted receiver",
+    async (_name, reassignment) => {
+      const execution = inspectFixtureSurface(
+        await executionFixture({
+          readiness: `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  let previewEngine = new PaperTradingEngine(policy);
+  ${reassignment}
+  return previewEngine.execute(order);
+}\n${minimalNoOpAdapter}`,
+        }),
+      );
+
+      expect(execution.liveExecution).toBe("unknown");
+      expect(execution.findings).toContain(
+        "Calling injected runtime capability through a parameter is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.",
+      );
+    },
+  );
+
+  test.each([
+    [
+      "closure storage",
+      `let slot: unknown;
+function stash(value: unknown) { slot = value; }
+function take() { return slot; }
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  let previewEngine = new PaperTradingEngine(policy);
+  stash(state);
+  previewEngine = take() as any;
+  return previewEngine.execute(order);
+}`,
+    ],
+    [
+      "array storage",
+      `const values: unknown[] = [];
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  let previewEngine = new PaperTradingEngine(policy);
+  values.push(state);
+  previewEngine = values.pop() as any;
+  return previewEngine.execute(order);
+}`,
+    ],
+    [
+      "computed property storage",
+      `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void policy;
+  const cell: any = {};
+  cell["slot"] = state;
+  const previewEngine = cell["slot"];
+  return previewEngine.execute(order);
+}`,
+    ],
+    [
+      "array fill storage",
+      `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void policy;
+  const values: any[] = [null];
+  values.fill(state);
+  const previewEngine = values.at(0);
+  return previewEngine.execute(order);
+}`,
+    ],
+    [
+      "generic object method storage",
+      `const box: any = {
+  value: null,
+  stash(value: unknown) { this.value = value; },
+  take() { return this.value; },
+};
+function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void policy;
+  box.stash(state);
+  const previewEngine = box.take();
+  return previewEngine.execute(order);
+}`,
+    ],
+    [
+      "constructed map storage",
+      `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  void policy;
+  const cell = new Map([["engine", state]]);
+  const previewEngine = cell.get("engine");
+  return previewEngine.execute(order);
+}`,
+    ],
+  ])("rejects parameter laundering through %s", async (_name, body) => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({ readiness: `${body}\n${minimalNoOpAdapter}` }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("Parameter-derived value may not escape") ||
+          finding.includes("Calling injected runtime capability") ||
+          finding.includes("Parameter-derived value may not be passed"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects computed module loading capability capture", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `const load = (import.meta as any)["require"];
+const net = load("node:https");
+net.request("https://broker.invalid", { method: "POST" }).end();
+${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings).toContain(
+      'Forbidden execution capability "require" found in plugins/plugin-paper-trading/src/launch-readiness.ts.',
+    );
+  });
+
+  test.each([
+    [
+      "constructor",
+      `const key = \`con${"structor"}\`;
+const Factory = (() => {})[key as "constructor"] as FunctionConstructor;
+const run = Factory('return fetch("https://broker.invalid/orders", { method: "POST" })');
+run();`,
+    ],
+    [
+      "module loader",
+      `const key = "require";
+const load = (import.meta as any)[key];
+const net = load("node:https");
+net.request("https://broker.invalid", { method: "POST" }).end();`,
+    ],
+  ])(
+    "rejects %s capture through a computed-key variable",
+    async (_name, body) => {
+      const execution = inspectFixtureSurface(
+        await executionFixture({ readiness: `${body}\n${minimalNoOpAdapter}` }),
+      );
+
+      expect(execution.liveExecution).toBe("unknown");
+      expect(
+        execution.findings.some((finding) =>
+          finding.includes("Non-allowlisted computed runtime access"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test("rejects legacy prototype accessor mutation", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function buildPaperDryRunPlan(state: any, order: any, policy?: any) {
+  PaperTradingEngine.prototype.__defineGetter__("execute", () => state.execute);
+  const previewEngine = new PaperTradingEngine(policy);
+  return previewEngine.execute(order);
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Runtime reflection or mutation"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects reviewed function names with substituted parameter roles", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function normalizePolicy(value: any) { return value.symbolAllowlist.map((symbol: string) => symbol); }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some(
+        (finding) =>
+          finding.includes("Reviewed function signature changed") &&
+          finding.includes("(normalizePolicy)"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects a lookalike reconstructed policy with untrusted provenance", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function recomputePlanHash(plan: any) {
+  const policy = plan.effectivePolicy;
+  const replayPolicy = {
+    initialCashMicros: policy.initialCashMicros,
+    maxOrderMicros: BigInt(policy.maxOrderMicros),
+    maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
+    maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
+    minCashReserveMicros: BigInt(policy.minCashReserveMicros),
+    maxDailyLossMicros: BigInt(policy.maxDailyLossMicros),
+    feeBps: BigInt(policy.feeBps),
+    slippageBps: BigInt(policy.slippageBps),
+    maxQuoteAgeMs: policy.maxQuoteAgeMs,
+    symbolAllowlist: policy.symbolAllowlist,
+  };
+  return replayPolicy.symbolAllowlist.includes("BTC");
+}\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings).toContain(
+      "Calling injected runtime capability through a parameter is forbidden in plugins/plugin-paper-trading/src/launch-readiness.ts.",
+    );
+  });
+
+  test("rejects reflection that hides constructor and transport recovery", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: noOpAdapterWithBody(
+          `const Factory = Reflect.get("", "constructor"); const post = Reflect.apply(Factory, undefined, ['return fetch(arguments[0], {method: "POST"})']); void post;`,
+        ),
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings).toContain(
+      'Forbidden execution capability "Reflect" found in plugins/plugin-paper-trading/src/launch-readiness.ts.',
+    );
+  });
+
+  test.each([
+    ["object mutation", "Object.assign({}, { execute() {} });"],
+    ["tagged invocation", "const tag = String.raw; tag`execute`;"],
+    [
+      "parameter-derived construction",
+      "function isRecord(value: any) { new value.transport(); return true; }",
+    ],
+    [
+      "runtime accessor",
+      "const capability = { get execute() { return () => undefined; } }; void capability;",
+    ],
+    [
+      "destructured constructor",
+      "function isRecord(value: any) { const { constructor } = value; void constructor; return true; }",
+    ],
+    [
+      "computed constructor recovery",
+      'const Factory = ""["con" + "structor"]; void Factory;',
+    ],
+    [
+      "trusted receiver method mutation",
+      "function normalizePolicy(policy: any) { policy.symbolAllowlist.map = () => []; return policy; }",
+    ],
+    ["trusted factory mutation", "createHash = () => undefined;"],
+    [
+      "trusted runtime capture",
+      "const ObjectAlias = Object; ObjectAlias.defineProperty({}, 'execute', { value: undefined });",
+    ],
+    [
+      "trusted runtime shadowing",
+      "function isRecord(value: any) { const Object = value; void Object; return true; }",
+    ],
+  ])("rejects %s", async (_name, body) => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({ readiness: `${body}\n${minimalNoOpAdapter}` }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(execution.findings.length).toBeGreaterThan(0);
+  });
+
+  test("rejects a callable laundered through a parameter-capturing closure", async () => {
+    const execution = inspectFixtureSurface(
+      await executionFixture({
+        readiness: `function isRecord(value: any) { const sink = getSink(); function getSink() { return value.transport; } sink(); return true; }\n${minimalNoOpAdapter}`,
+      }),
+    );
+
+    expect(execution.liveExecution).toBe("unknown");
+    expect(
+      execution.findings.some((finding) =>
+        finding.includes("Calling injected runtime parameter"),
+      ),
+    ).toBe(true);
+  });
+
   test("rejects computed helper invocation and implicit adapter fallthrough", async () => {
-    const computed = inspectExecutionSurface(
+    const computed = inspectFixtureSurface(
       await executionFixture({
         readiness: `import { helper } from "./helper.js";\n${minimalNoOpAdapter}`,
         files: {
@@ -623,7 +1377,7 @@ describe("paper status execution boundary", () => {
         },
       }),
     );
-    const fallthrough = inspectExecutionSurface(
+    const fallthrough = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "export class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void plan; void nowMs; if (intent) return { executed: false }; } }\n",
@@ -641,13 +1395,13 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects executable index mutation and duplicate no-op exports", async () => {
-    const mutation = inspectExecutionSurface(
+    const mutation = inspectFixtureSurface(
       await executionFixture({
         index:
           'import { NoOpExecutionAdapter } from "./launch-readiness.js";\nNoOpExecutionAdapter.prototype.evaluate = () => ({ executed: false });\nexport { NoOpExecutionAdapter } from "./launch-readiness.js";\n',
       }),
     );
-    const duplicate = inspectExecutionSurface(
+    const duplicate = inspectFixtureSurface(
       await executionFixture({
         index:
           'export { NoOpExecutionAdapter, NoOpExecutionAdapter } from "./launch-readiness.js";\n',
@@ -660,22 +1414,22 @@ describe("paper status execution boundary", () => {
     );
     expect(duplicate.liveExecution).toBe("unknown");
     expect(duplicate.findings).toContain(
-      'NoOpExecutionAdapter must be directly re-exported exactly once from ./launch-readiness.js by canonical source plugins/plugin-paper-trading/src/index.ts.',
+      "NoOpExecutionAdapter must be directly re-exported exactly once from ./launch-readiness.js by canonical source plugins/plugin-paper-trading/src/index.ts.",
     );
   });
 
   test("rejects adapter replacement in readiness and new public runtime exports", async () => {
-    const replacement = inspectExecutionSurface(
+    const replacement = inspectFixtureSurface(
       await executionFixture({
         readiness: `${minimalNoOpAdapter}NoOpExecutionAdapter.prototype.evaluate = () => ({ executed: false });\n`,
       }),
     );
-    const reassignment = inspectExecutionSurface(
+    const reassignment = inspectFixtureSurface(
       await executionFixture({
         readiness: `${minimalNoOpAdapter}NoOpExecutionAdapter = class { evaluate() { return { executed: false }; } };\n`,
       }),
     );
-    const publicBroker = inspectExecutionSurface(
+    const publicBroker = inspectFixtureSurface(
       await executionFixture({
         index:
           'export { NoOpExecutionAdapter } from "./launch-readiness.js";\nexport * from "./broker.js";\n',
@@ -684,7 +1438,7 @@ describe("paper status execution boundary", () => {
         },
       }),
     );
-    const emptyExternalExport = inspectExecutionSurface(
+    const emptyExternalExport = inspectFixtureSurface(
       await executionFixture({
         index:
           'export { NoOpExecutionAdapter } from "./launch-readiness.js";\nexport {} from "broker-sdk";\n',
@@ -710,7 +1464,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects runtime JavaScript shadows for readiness and helper edges", async () => {
-    const readinessShadow = inspectExecutionSurface(
+    const readinessShadow = inspectFixtureSurface(
       await executionFixture({
         files: {
           "launch-readiness.js":
@@ -718,7 +1472,7 @@ describe("paper status execution boundary", () => {
         },
       }),
     );
-    const helperShadow = inspectExecutionSurface(
+    const helperShadow = inspectFixtureSurface(
       await executionFixture({
         readiness: `import { helper } from "./helper.js";\n${minimalNoOpAdapter}`,
         files: {
@@ -743,7 +1497,7 @@ describe("paper status execution boundary", () => {
   });
 
   test("rejects decorators that can replace the adapter definition", async () => {
-    const execution = inspectExecutionSurface(
+    const execution = inspectFixtureSurface(
       await executionFixture({
         readiness:
           "function replace(value: unknown) { return value; }\n@replace\nexport class NoOpExecutionAdapter { evaluate(plan: unknown, intent: unknown, nowMs: number) { void plan; void intent; void nowMs; return { executed: false }; } }\n",
@@ -764,26 +1518,103 @@ describe("paper status execution boundary", () => {
         "validation.ts": "export function validate() { return true; }\n",
       },
     });
-    const initial = inspectExecutionSurface(root);
+    const initial = inspectFixtureSurface(root);
     await writeFile(
-      join(
-        root,
-        "plugins",
-        "plugin-paper-trading",
-        "src",
-        "validation.ts",
-      ),
+      join(root, "plugins", "plugin-paper-trading", "src", "validation.ts"),
       "export function validate() { return false; }\n",
     );
-    const changed = inspectExecutionSurface(root);
+    const changed = inspectFixtureSurface(root);
 
     expect(initial.liveExecution).toBe("unknown");
     expect(changed.liveExecution).toBe("unknown");
     expect(changed.sourceHash).not.toBe(initial.sourceHash);
   });
 
+  test("fails closed when a pinned clean execution closure changes", async () => {
+    const root = await executionFixture();
+    const initial = inspectFixtureSurface(root);
+    await writeFile(
+      join(
+        root,
+        "plugins",
+        "plugin-paper-trading",
+        "src",
+        "launch-readiness.ts",
+      ),
+      `${minimalNoOpAdapter} `,
+    );
+    const changed = inspectFixtureSurface(root, initial.sourceSha256);
+
+    expect(initial.liveExecution).toBe(false);
+    expect(initial.findings).toEqual([]);
+    expect(changed.liveExecution).toBe("unknown");
+    expect(changed.findings).toEqual([
+      expect.stringContaining("Execution closure digest changed"),
+    ]);
+  });
+
+  test("default digest includes non-readiness public runtime dependencies", async () => {
+    const { root, targetPackage } = await canonicalExecutionFixture();
+
+    const initial = inspectExecutionSurface(root);
+    const actionPath = join(targetPackage, "src", "action.ts");
+    const action = await readFile(actionPath, "utf8");
+    await writeFile(
+      actionPath,
+      `${action}\nvoid fetch("https://broker.invalid/orders", { method: "POST" });\n`,
+    );
+    const changed = inspectExecutionSurface(root);
+
+    expect(initial.liveExecution).toBe(false);
+    expect(initial.findings).toEqual([]);
+    expect(changed.liveExecution).toBe("unknown");
+    expect(changed.sourceSha256).not.toBe(initial.sourceSha256);
+    expect(changed.findings).toEqual([
+      expect.stringContaining("Execution closure digest changed"),
+    ]);
+  });
+
+  test("rejects a build config that redirects the emitted default entry", async () => {
+    const { root, targetPackage } = await canonicalExecutionFixture();
+    const alternate = join(targetPackage, "alternate-runtime");
+    await mkdir(alternate, { recursive: true });
+    await writeFile(
+      join(alternate, "index.ts"),
+      'void fetch("https://broker.invalid/orders", { method: "POST" });\n',
+    );
+    await writeFile(
+      join(targetPackage, "tsconfig.build.json"),
+      `${JSON.stringify(
+        {
+          extends: "../tsconfig.build.shared.json",
+          compilerOptions: {
+            allowImportingTsExtensions: false,
+            declaration: true,
+            declarationMap: true,
+            emitDeclarationOnly: false,
+            noEmit: false,
+            outDir: "dist",
+            rootDir: "alternate-runtime",
+            rewriteRelativeImportExtensions: true,
+          },
+          include: ["alternate-runtime/**/*.ts"],
+          exclude: ["test/**/*.ts"],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = inspectExecutionSurface(root);
+
+    expect(result.liveExecution).toBe("unknown");
+    expect(result.findings[0]).toContain(
+      "tsconfig.build.json must include only src/**/*.ts",
+    );
+  });
+
   test("reports an unreadable execution surface as unknown", () => {
-    const result = inspectExecutionSurface(
+    const result = inspectFixtureSurface(
       resolve(tmpdir(), "paper-status-does-not-exist"),
     );
 
@@ -806,7 +1637,7 @@ describe("paper status execution boundary", () => {
       })}\n`,
     );
 
-    const result = inspectExecutionSurface(root);
+    const result = inspectFixtureSurface(root);
 
     expect(result.liveExecution).toBe(false);
     expect(result.findings).toEqual([]);
@@ -823,7 +1654,7 @@ describe("paper status execution boundary", () => {
       })}\n`,
     );
 
-    const result = inspectExecutionSurface(root);
+    const result = inspectFixtureSurface(root);
 
     expect(result.liveExecution).toBe("unknown");
     expect(result.findings[0]).toContain("paperStatus=true");
@@ -844,7 +1675,7 @@ describe("paper status execution boundary", () => {
       })}\n`,
     );
 
-    const result = inspectExecutionSurface(root);
+    const result = inspectFixtureSurface(root);
 
     expect(result.liveExecution).toBe("unknown");
     expect(result.findings[0]).toContain("must bind");
@@ -860,7 +1691,7 @@ describe("paper status execution boundary", () => {
       "export class NoOpExecutionAdapter {}\n",
     );
 
-    const result = inspectExecutionSurface(root);
+    const result = inspectFixtureSurface(root);
 
     expect(result.liveExecution).toBe("unknown");
     expect(result.findings).toContain(
@@ -880,7 +1711,7 @@ describe("paper status execution boundary", () => {
       "export class NoOpExecutionAdapter {}\n",
     );
 
-    const result = inspectExecutionSurface(root);
+    const result = inspectFixtureSurface(root);
 
     expect(result.liveExecution).toBe("unknown");
     expect(result.findings).toContain(
@@ -894,7 +1725,7 @@ describe("paper status execution boundary", () => {
     'export { NoOpExecutionAdapter as Renamed } from "./launch-readiness.js";\n',
     'export { Renamed as NoOpExecutionAdapter } from "./launch-readiness.js";\n',
   ])("rejects non-runtime or aliased no-op export: %s", async (index) => {
-    const result = inspectExecutionSurface(await executionFixture({ index }));
+    const result = inspectFixtureSurface(await executionFixture({ index }));
 
     expect(result.liveExecution).toBe("unknown");
     expect(
@@ -904,14 +1735,34 @@ describe("paper status execution boundary", () => {
     ).toBe(true);
   });
 
-  test("binds the source hash to canonical metadata and both inspected sources", async () => {
+  test("binds the source hash to raw metadata and inspected sources", async () => {
     const root = await executionFixture();
-    const initial = inspectExecutionSurface(root);
+    const initial = inspectFixtureSurface(root);
+    const manifestPath = join(
+      root,
+      "plugins",
+      "plugin-paper-trading",
+      "package.json",
+    );
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({ ...manifest, description: "digest probe" }, null, 2)}\n`,
+    );
+    const manifestChanged = inspectFixtureSurface(root);
+    const sharedBuildConfigPath = join(
+      root,
+      "plugins",
+      "tsconfig.build.shared.json",
+    );
+    const sharedBuildConfig = await readFile(sharedBuildConfigPath, "utf8");
+    await writeFile(sharedBuildConfigPath, `${sharedBuildConfig} `);
+    const sharedBuildConfigChanged = inspectFixtureSurface(root);
     await writeFile(
       join(root, "plugins", "plugin-paper-trading", "src", "index.ts"),
       '// harmless public-source change\nexport { NoOpExecutionAdapter } from "./launch-readiness.js";\n',
     );
-    const indexChanged = inspectExecutionSurface(root);
+    const indexChanged = inspectFixtureSurface(root);
     await writeFile(
       join(
         root,
@@ -922,9 +1773,15 @@ describe("paper status execution boundary", () => {
       ),
       "// harmless readiness change\nexport class NoOpExecutionAdapter {}\n",
     );
-    const readinessChanged = inspectExecutionSurface(root);
+    const readinessChanged = inspectFixtureSurface(root);
 
-    expect(indexChanged.sourceHash).not.toBe(initial.sourceHash);
+    expect(manifestChanged.sourceHash).not.toBe(initial.sourceHash);
+    expect(sharedBuildConfigChanged.sourceHash).not.toBe(
+      manifestChanged.sourceHash,
+    );
+    expect(indexChanged.sourceHash).not.toBe(
+      sharedBuildConfigChanged.sourceHash,
+    );
     expect(readinessChanged.sourceHash).not.toBe(indexChanged.sourceHash);
   });
 });
